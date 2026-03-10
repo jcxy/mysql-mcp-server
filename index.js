@@ -4,21 +4,9 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import mysql from 'mysql2/promise';
+import mysql from 'mysql2';
 import { Client } from 'ssh2';
 import config from './config.js';
-
-// 数据库配置：优先使用环境变量
-const dbConfig = {
-  host: process.env.MYSQL_HOST || config.host || 'localhost',
-  port: parseInt(process.env.MYSQL_PORT, 10) || config.port || 3306,
-  user: process.env.MYSQL_USER || config.user || 'root',
-  password: process.env.MYSQL_PASSWORD || config.password || '',
-  database: process.env.MYSQL_DATABASE || config.database,
-  waitForConnections: true,
-  connectionLimit: parseInt(process.env.MYSQL_CONNECTION_LIMIT, 10) || config.connectionLimit || 10,
-  queueLimit: config.queueLimit || 0
-};
 
 // SSH 配置
 const sshConfig = {
@@ -29,18 +17,24 @@ const sshConfig = {
   password: process.env.SSH_PASSWORD || config.ssh?.password || '',
   privateKey: process.env.SSH_PRIVATE_KEY || config.ssh?.privateKey || '',
   passphrase: process.env.SSH_PASSPHRASE || config.ssh?.passphrase || '',
-  // SSH 隧道本地转发配置
-  localPort: parseInt(process.env.SSH_LOCAL_PORT, 10) || config.ssh?.localPort || 3307,
-  localHost: process.env.SSH_LOCAL_HOST || config.ssh?.localHost || '127.0.0.1',
-  remoteHost: process.env.SSH_REMOTE_HOST || config.ssh?.remoteHost || dbConfig.host,
-  remotePort: parseInt(process.env.SSH_REMOTE_PORT, 10) || config.ssh?.remotePort || dbConfig.port
+  remoteHost: process.env.SSH_REMOTE_HOST || process.env.MYSQL_HOST || config.ssh?.remoteHost || 'localhost',
+  remotePort: parseInt(process.env.SSH_REMOTE_PORT, 10) || parseInt(process.env.MYSQL_PORT, 10) || config.ssh?.remotePort || 3306
 };
 
-let pool = null;
-let sshClient = null;
+// MySQL 配置
+const dbConfig = {
+  host: process.env.MYSQL_HOST || config.host || 'localhost',
+  port: parseInt(process.env.MYSQL_PORT, 10) || config.port || 3306,
+  user: process.env.MYSQL_USER || config.user || 'root',
+  password: process.env.MYSQL_PASSWORD || config.password || '',
+  database: process.env.MYSQL_DATABASE || config.database,
+};
 
-// 创建 SSH 隧道
-function createSSHTunnel() {
+let sshClient = null;
+let sshReady = false;
+
+// 初始化 SSH 连接
+function initSSH() {
   return new Promise((resolve, reject) => {
     if (!sshConfig.enabled) {
       return resolve(null);
@@ -52,49 +46,22 @@ function createSSHTunnel() {
     sshClient = ssh;
 
     ssh.on('ready', () => {
-      console.error('[SSH] Connected, creating tunnel...');
-
-      ssh.forwardOut(
-        sshConfig.localHost,
-        sshConfig.localPort,
-        sshConfig.remoteHost,
-        sshConfig.remotePort,
-        (err, stream) => {
-          if (err) {
-            console.error('[SSH] Forward error:', err.message);
-            return reject(err);
-          }
-
-          // 测试连接是否成功
-          stream.on('error', (e) => {
-            console.error('[SSH] Stream error:', e.message);
-          });
-
-          console.error(`[SSH] Tunnel created: ${sshConfig.localHost}:${sshConfig.localPort} -> ${sshConfig.remoteHost}:${sshConfig.remotePort}`);
-          resolve(stream);
-        }
-      );
+      console.error('[SSH] Connected successfully');
+      sshReady = true;
+      resolve(true);
     });
 
     ssh.on('error', (err) => {
       console.error('[SSH] Connection error:', err.message);
+      sshReady = false;
       reject(err);
-    });
-
-    ssh.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
-      console.error('[SSH] Keyboard interactive auth not supported');
-      finish([]);
-    });
-
-    ssh.on('greeting', (greeting) => {
-      console.error('[SSH] Greeting:', greeting);
     });
 
     ssh.on('close', () => {
       console.error('[SSH] Connection closed');
+      sshReady = false;
     });
 
-    // 构建连接选项
     const connectOpts = {
       host: sshConfig.host,
       port: sshConfig.port,
@@ -102,7 +69,6 @@ function createSSHTunnel() {
       readyTimeout: 10000
     };
 
-    // 优先使用私钥认证
     if (sshConfig.privateKey) {
       connectOpts.privateKey = sshConfig.privateKey;
       if (sshConfig.passphrase) {
@@ -116,30 +82,102 @@ function createSSHTunnel() {
   });
 }
 
-// 创建 MySQL 连接池
-async function createPool() {
-  if (sshConfig.enabled) {
-    // 使用 SSH 隧道时，连接到本地转发的端口
-    const poolConfig = {
-      ...dbConfig,
-      host: sshConfig.localHost,
-      port: sshConfig.localPort,
-      // SSH 模式下不指定 database，通过后续连接指定
-      database: undefined
-    };
-    pool = mysql.createPool(poolConfig);
-  } else {
-    // 直接连接
-    const poolConfig = { ...dbConfig };
-    Object.keys(poolConfig).forEach(key => poolConfig[key] === undefined && delete poolConfig[key]);
-    pool = mysql.createPool(poolConfig);
-  }
+// 通过 SSH 隧道执行 MySQL 查询
+function queryViaSSH(sql, isExecute = false) {
+  return new Promise((resolve, reject) => {
+    if (!sshClient || !sshReady) {
+      return reject(new Error('SSH connection not ready'));
+    }
+
+    sshClient.forwardOut(
+      '127.0.0.1',
+      0,
+      sshConfig.remoteHost,
+      sshConfig.remotePort,
+      (err, stream) => {
+        if (err) {
+          console.error('[SSH] forwardOut error:', err.message);
+          return reject(new Error(`SSH tunnel error: ${err.message}`));
+        }
+
+        // 使用回调风格的 mysql2 连接
+        const connection = mysql.createConnection({
+          user: dbConfig.user,
+          password: dbConfig.password,
+          database: dbConfig.database,
+          stream: stream
+        });
+
+        connection.on('error', (err) => {
+          console.error('[MySQL] Connection error:', err.message);
+          reject(err);
+        });
+
+        if (isExecute) {
+          connection.execute(sql, (err, result) => {
+            connection.end();
+            if (err) {
+              reject(err);
+            } else {
+              resolve({ affectedRows: result.affectedRows, insertId: result.insertId });
+            }
+          });
+        } else {
+          connection.query(sql, (err, rows) => {
+            connection.end();
+            if (err) {
+              reject(err);
+            } else {
+              resolve(rows);
+            }
+          });
+        }
+      }
+    );
+  });
+}
+
+// 直接连接 MySQL 查询
+function queryDirect(sql, isExecute = false) {
+  return new Promise((resolve, reject) => {
+    const connection = mysql.createConnection({
+      host: dbConfig.host,
+      port: dbConfig.port,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      database: dbConfig.database,
+    });
+
+    connection.on('error', (err) => {
+      reject(err);
+    });
+
+    if (isExecute) {
+      connection.execute(sql, (err, result) => {
+        connection.end();
+        if (err) {
+          reject(err);
+        } else {
+          resolve({ affectedRows: result.affectedRows, insertId: result.insertId });
+        }
+      });
+    } else {
+      connection.query(sql, (err, rows) => {
+        connection.end();
+        if (err) {
+          reject(err);
+        } else {
+          resolve(rows);
+        }
+      });
+    }
+  });
 }
 
 const server = new Server(
   {
     name: 'mysql-server',
-    version: '1.0.1',
+    version: '1.0.3',
   },
   {
     capabilities: {
@@ -148,7 +186,6 @@ const server = new Server(
   }
 );
 
-// 注册工具：查询 MySQL
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -188,23 +225,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    let result;
     if (name === 'mysql_query') {
-      const [rows] = await pool.query(args.sql);
+      if (sshConfig.enabled) {
+        result = await queryViaSSH(args.sql, false);
+      } else {
+        result = await queryDirect(args.sql, false);
+      }
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(rows, null, 2),
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };
     } else if (name === 'mysql_execute') {
-      const [result] = await pool.execute(args.sql);
+      if (sshConfig.enabled) {
+        result = await queryViaSSH(args.sql, true);
+      } else {
+        result = await queryDirect(args.sql, true);
+      }
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ affectedRows: result.affectedRows, insertId: result.insertId }, null, 2),
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };
@@ -226,13 +272,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function main() {
   try {
-    // 如果启用 SSH，先建立隧道
     if (sshConfig.enabled) {
-      await createSSHTunnel();
+      await initSSH();
     }
-
-    // 创建 MySQL 连接池
-    await createPool();
 
     const transport = new StdioServerTransport();
     await server.connect(transport);
