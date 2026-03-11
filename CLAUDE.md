@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-一个 MySQL MCP (Model Context Protocol) 服务器，使 AI 助手能够与 MySQL 数据库交互。支持直连 MySQL 和 SSH 隧道两种连接模式。
+一个 MySQL MCP (Model Context Protocol) 服务器，使 AI 助手能够与 MySQL 数据库交互。支持直连 MySQL 和 SSH 隧道两种连接模式。使用 TypeScript 构建。
 
 ## 常用命令
 
@@ -12,24 +12,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # 安装依赖
 npm install
 
+# 开发模式（自动重新编译）
+npm run dev
+
+# 构建
+npm run build
+
 # 运行服务器 (需要 MCP 客户端如 Claude Desktop)
-node index.js
+npm start
 ```
 
 ## 架构
 
-**入口文件**: `index.js` - 包含所有服务器逻辑
+```
+src/
+├── index.ts      # 主入口，MCP 服务器定义和工具注册
+├── types.ts      # TypeScript 类型定义
+├── schemas.ts    # Zod 输入验证 schemas
+├── config.ts     # 配置管理（从环境变量读取）
+└── mysql.ts      # MySQL 服务类（支持直连和 SSH 隧道）
+```
+
+**入口文件**: `dist/index.js` - 编译后的主入口
 
 **两种连接模式**:
 1. **直连模式**: 直接连接 MySQL 服务器 (通过 `MYSQL_HOST`, `MYSQL_PORT` 等配置)
 2. **SSH 隧道模式**: 通过 SSH 跳板机连接 (通过 `SSH_ENABLED=true` 启用)
 
-**配置来源** (优先级从高到低):
-1. 环境变量 (推荐，在 MCP 客户端配置中设置)
-2. `config.js` 文件 (从 `config.example.js` 复制)
+**配置来源**: 仅通过环境变量配置（推荐在 MCP 客户端配置中设置）
 
 **提供的 MCP 工具**:
-- `mysql_query`: 执行 SELECT 查询，返回结果行 JSON
+- `mysql_query`: 执行 SELECT 查询，返回 `{rows, rowCount}`
 - `mysql_execute`: 执行 INSERT/UPDATE/DELETE，返回 `{affectedRows, insertId}`
 
 **连接流程**:

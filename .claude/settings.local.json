@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(cd:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(echo Node not found in PATH:*)"
     ]
   }
 }

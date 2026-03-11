@@ -4,10 +4,11 @@
 
 ## 功能特性
 
-- 🔌 **双连接模式**: 支持直接连接和 SSH 隧道连接
-- 🔍 **查询执行**: 执行 SELECT 查询并返回结果
-- ✏️ **数据操作**: 执行 INSERT、UPDATE、DELETE 等语句
-- 🌍 **多环境支持**: 可配置多个数据库连接（开发、测试、生产等）
+- **双连接模式**: 支持直接连接和 SSH 隧道连接
+- **查询执行**: 执行 SELECT 查询并返回结果
+- **数据操作**: 执行 INSERT、UPDATE、DELETE 等语句
+- **多环境支持**: 可配置多个数据库连接（开发、测试、生产等）
+- **类型安全**: 使用 TypeScript 构建，提供完整的类型定义
 
 ## 安装
 
@@ -20,23 +21,27 @@ cd mysql-mcp-server
 
 # 安装依赖
 npm install
+
+# 构建
+npm run build
+```
+
+## 开发
+
+```bash
+# 开发模式（自动重新编译）
+npm run dev
+
+# 构建
+npm run build
+
+# 运行
+npm start
 ```
 
 ## 配置方式
 
-### 方式一：环境变量（推荐）
-
-在 MCP 客户端配置中通过环境变量传递数据库连接信息，无需修改代码。
-
-### 方式二：配置文件
-
-复制配置模板并修改：
-
-```bash
-cp config.example.js config.js
-```
-
-然后编辑 `config.js` 文件填入你的数据库信息。
+通过环境变量传递数据库连接信息，无需修改代码。
 
 ## 在 Claude Desktop 中使用
 
@@ -52,7 +57,7 @@ cp config.example.js config.js
   "mcpServers": {
     "mysql": {
       "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "args": ["/path/to/mysql-mcp-server/dist/index.js"],
       "env": {
         "MYSQL_HOST": "localhost",
         "MYSQL_PORT": "3306",
@@ -74,7 +79,7 @@ cp config.example.js config.js
   "mcpServers": {
     "mysql-prod": {
       "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "args": ["/path/to/mysql-mcp-server/dist/index.js"],
       "env": {
         "SSH_ENABLED": "true",
         "SSH_HOST": "ssh.example.com",
@@ -89,7 +94,7 @@ cp config.example.js config.js
     },
     "mysql-dev": {
       "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "args": ["/path/to/mysql-mcp-server/dist/index.js"],
       "env": {
         "MYSQL_HOST": "192.168.1.100",
         "MYSQL_PORT": "3306",
@@ -99,7 +104,7 @@ cp config.example.js config.js
     },
     "mysql-test": {
       "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "args": ["/path/to/mysql-mcp-server/dist/index.js"],
       "env": {
         "MYSQL_HOST": "192.168.1.101",
         "MYSQL_PORT": "3306",
@@ -146,6 +151,14 @@ cp config.example.js config.js
 **参数**:
 - `sql`: SQL 查询语句
 
+**返回**:
+```json
+{
+  "rows": [...],
+  "rowCount": 10
+}
+```
+
 **示例**:
 ```sql
 SELECT * FROM users WHERE id = 1
@@ -158,9 +171,32 @@ SELECT * FROM users WHERE id = 1
 **参数**:
 - `sql`: SQL 执行语句
 
+**返回**:
+```json
+{
+  "affectedRows": 1,
+  "insertId": 123
+}
+```
+
 **示例**:
 ```sql
 INSERT INTO users (name, email) VALUES ('张三', 'zhangsan@example.com')
+```
+
+## 项目结构
+
+```
+mysql-mcp-server/
+├── src/
+│   ├── index.ts      # 主入口
+│   ├── types.ts      # 类型定义
+│   ├── schemas.ts    # Zod 验证
+│   ├── config.ts     # 配置管理
+│   └── mysql.ts      # MySQL 服务
+├── dist/             # 编译输出
+├── package.json
+└── tsconfig.json
 ```
 
 ## 使用场景
