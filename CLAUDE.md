@@ -53,3 +53,13 @@ node index.js
 | `SSH_PRIVATE_KEY` | SSH 私钥内容 | - |
 | `SSH_REMOTE_HOST` | SSH 隧道内的 MySQL 地址 | localhost |
 | `SSH_REMOTE_PORT` | SSH 隧道内的 MySQL 端口 | 3306 |
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `jcxy/mysql-mcp-server`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context layout: one `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.

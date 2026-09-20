@@ -7,6 +7,10 @@ import {
 import mysql from 'mysql2';
 import { Client } from 'ssh2';
 import config from './config.js';
+import { validateQuery, parseMaxRows, truncateResult } from './lib/validation.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
 // SSH 配置
 const sshConfig = {
@@ -20,6 +24,20 @@ const sshConfig = {
   remoteHost: process.env.SSH_REMOTE_HOST || process.env.MYSQL_HOST || config.ssh?.remoteHost || 'localhost',
   remotePort: parseInt(process.env.SSH_REMOTE_PORT, 10) || parseInt(process.env.MYSQL_PORT, 10) || config.ssh?.remotePort || 3306
 };
+
+// 读取版本号
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
+
+// 只读模式配置
+const readOnly = process.env.READ_ONLY === 'true' || config.readOnly === true || false;
+
+// 结果行数上限
+const maxRows = parseMaxRows(
+  process.env.MAX_ROWS || config.maxRows,
+  1000
+);
 
 // MySQL 配置
 const dbConfig = {
@@ -177,7 +195,7 @@ function queryDirect(sql, isExecute = false) {
 const server = new Server(
   {
     name: 'mysql-server',
-    version: '1.0.3',
+    version: pkg.version,
   },
   {
     capabilities: {
@@ -227,20 +245,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     let result;
     if (name === 'mysql_query') {
+      // 语句白名单校验
+      const validation = validateQuery(args.sql);
+      if (!validation.allowed) {
+        return {
+          content: [{ type: 'text', text: validation.reason }],
+          isError: true,
+        };
+      }
+
       if (sshConfig.enabled) {
         result = await queryViaSSH(args.sql, false);
       } else {
         result = await queryDirect(args.sql, false);
       }
+
+      // 结果截断
+      const truncated = truncateResult(result, maxRows);
+
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result, null, 2),
+            text: JSON.stringify(truncated, null, 2),
           },
         ],
       };
     } else if (name === 'mysql_execute') {
+      // 只读模式检查
+      if (readOnly) {
+        return {
+          content: [{
+            type: 'text',
+            text: '当前为只读模式（READ_ONLY=true），变更语句已被禁用。如需执行变更，请关闭只读模式后重试。'
+          }],
+          isError: true,
+        };
+      }
+
       if (sshConfig.enabled) {
         result = await queryViaSSH(args.sql, true);
       } else {
@@ -280,7 +322,8 @@ async function main() {
     await server.connect(transport);
 
     const mode = sshConfig.enabled ? 'SSH Tunnel' : 'Direct';
-    console.error(`MySQL MCP Server running on stdio (${mode})`);
+    const roFlag = readOnly ? ' [只读模式]' : '';
+    console.error(`MySQL MCP Server v${pkg.version} running on stdio (${mode})${roFlag}, MAX_ROWS=${maxRows}`);
   } catch (error) {
     console.error('Failed to start server:', error.message);
     process.exit(1);

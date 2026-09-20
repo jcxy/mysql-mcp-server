@@ -13,7 +13,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-username/mysql-mcp-server.git
+git clone https://github.com/jcxy/mysql-mcp-server.git
 
 # 进入目录
 cd mysql-mcp-server
@@ -122,6 +122,8 @@ cp config.example.js config.js
 | `MYSQL_USER` | MySQL 用户名 | `root` |
 | `MYSQL_PASSWORD` | MySQL 密码 | - |
 | `MYSQL_DATABASE` | 默认数据库（可选） | - |
+| `READ_ONLY` | 是否启用只读模式（禁用 mysql_execute） | `false` |
+| `MAX_ROWS` | 查询结果最大行数，超出将截断 | `1000` |
 
 ### SSH 隧道配置
 
@@ -141,27 +143,33 @@ cp config.example.js config.js
 
 ### mysql_query
 
-执行 SQL 查询语句（SELECT），返回查询结果。
+执行 SQL 查询语句（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH...SELECT），返回查询结果。
+
+**安全限制**:
+- 仅允许只读语句（SELECT、SHOW、DESCRIBE、EXPLAIN、WITH...SELECT）
+- 结果超过 MAX_ROWS 行时自动截断，返回前 N 行并附带截断标记
 
 **参数**:
 - `sql`: SQL 查询语句
 
-**示例**:
-```sql
-SELECT * FROM users WHERE id = 1
+**返回格式**:
+```json
+{
+  "rows": [...],
+  "truncated": false,
+  "returnedRows": 10,
+  "maxRows": 1000
+}
 ```
 
 ### mysql_execute
 
 执行 SQL 更新语句（INSERT、UPDATE、DELETE），返回影响的行数。
 
+**注意**: 当 `READ_ONLY=true` 时，此工具将被禁用。
+
 **参数**:
 - `sql`: SQL 执行语句
-
-**示例**:
-```sql
-INSERT INTO users (name, email) VALUES ('张三', 'zhangsan@example.com')
-```
 
 ## 使用场景
 
@@ -174,6 +182,8 @@ INSERT INTO users (name, email) VALUES ('张三', 'zhangsan@example.com')
 - 密码等敏感信息请勿提交到版本控制
 - 建议使用环境变量方式配置，避免硬编码
 - SSH 隧道模式适合连接内网或受保护的数据库
+- **默认非只读模式**：生产环境建议设置 `READ_ONLY=true` 防止 AI 误操作
+- `mysql_query` 仅允许只读语句（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH...SELECT），变更语句请使用 `mysql_execute`
 
 ## License
 
