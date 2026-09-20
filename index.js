@@ -50,6 +50,74 @@ const dbConfig = {
 
 let sshClient = null;
 let sshReady = false;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+const MAX_RECONNECT_DELAY = 30000; // 最大重连间隔 30 秒
+
+// 获取 SSH 连接参数
+function getSSHConnectOpts() {
+  const connectOpts = {
+    host: sshConfig.host,
+    port: sshConfig.port,
+    username: sshConfig.username,
+    readyTimeout: 10000
+  };
+
+  if (sshConfig.privateKey) {
+    connectOpts.privateKey = sshConfig.privateKey;
+    if (sshConfig.passphrase) {
+      connectOpts.passphrase = sshConfig.passphrase;
+    }
+  } else if (sshConfig.password) {
+    connectOpts.password = sshConfig.password;
+  }
+
+  return connectOpts;
+}
+
+// 计算重连延迟（指数退避）
+function getReconnectDelay() {
+  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+  return delay;
+}
+
+// 尝试重连 SSH
+function reconnectSSH() {
+  if (reconnectTimer || !sshConfig.enabled) return;
+  
+  const delay = getReconnectDelay();
+  console.error(`[SSH] Reconnecting in ${delay}ms (attempt ${reconnectAttempts + 1})...`);
+  
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    reconnectAttempts++;
+    
+    const ssh = new Client();
+    sshClient = ssh;
+    
+    ssh.on('ready', () => {
+      console.error('[SSH] Reconnected successfully');
+      sshReady = true;
+      reconnectAttempts = 0; // 重置重连计数
+    });
+    
+    ssh.on('error', (err) => {
+      console.error('[SSH] Reconnection error:', err.message);
+      sshReady = false;
+      // 继续尝试重连
+      reconnectSSH();
+    });
+    
+    ssh.on('close', () => {
+      console.error('[SSH] Connection closed');
+      sshReady = false;
+      // 连接关闭后尝试重连
+      reconnectSSH();
+    });
+    
+    ssh.connect(getSSHConnectOpts());
+  }, delay);
+}
 
 // 初始化 SSH 连接
 function initSSH() {
@@ -66,6 +134,7 @@ function initSSH() {
     ssh.on('ready', () => {
       console.error('[SSH] Connected successfully');
       sshReady = true;
+      reconnectAttempts = 0;
       resolve(true);
     });
 
@@ -78,25 +147,11 @@ function initSSH() {
     ssh.on('close', () => {
       console.error('[SSH] Connection closed');
       sshReady = false;
+      // 连接关闭后尝试重连
+      reconnectSSH();
     });
 
-    const connectOpts = {
-      host: sshConfig.host,
-      port: sshConfig.port,
-      username: sshConfig.username,
-      readyTimeout: 10000
-    };
-
-    if (sshConfig.privateKey) {
-      connectOpts.privateKey = sshConfig.privateKey;
-      if (sshConfig.passphrase) {
-        connectOpts.passphrase = sshConfig.passphrase;
-      }
-    } else if (sshConfig.password) {
-      connectOpts.password = sshConfig.password;
-    }
-
-    ssh.connect(connectOpts);
+    ssh.connect(getSSHConnectOpts());
   });
 }
 
@@ -235,6 +290,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['sql'],
         },
       },
+      {
+        name: 'mysql_list_tables',
+        description: '列出当前数据库中的所有表',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'mysql_describe_table',
+        description: '查看指定表的结构（列名、类型、是否可空等）',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            table: {
+              type: 'string',
+              description: '要查看结构的表名',
+            },
+          },
+          required: ['table'],
+        },
+      },
     ],
   };
 });
@@ -293,6 +370,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: 'text',
             text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } else if (name === 'mysql_list_tables') {
+      // 列出当前数据库的所有表
+      const sql = 'SHOW TABLES';
+      if (sshConfig.enabled) {
+        result = await queryViaSSH(sql, false);
+      } else {
+        result = await queryDirect(sql, false);
+      }
+      // 提取表名列表
+      const tables = result.map(row => Object.values(row)[0]);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ tables, count: tables.length }, null, 2),
+          },
+        ],
+      };
+    } else if (name === 'mysql_describe_table') {
+      // 查看表结构
+      const tableName = args.table;
+      // 验证表名（防止 SQL 注入）- 使用白名单
+      if (!tableName || typeof tableName !== 'string') {
+        return {
+          content: [{ type: 'text', text: '表名不能为空' }],
+          isError: true,
+        };
+      }
+      // 仅允许字母、数字、下划线（合法 MySQL 标识符）
+      if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
+        return {
+          content: [{ type: 'text', text: '表名包含非法字符（仅允许字母、数字和下划线）' }],
+          isError: true,
+        };
+      }
+      const sql = `DESCRIBE \`${tableName}\``;
+      if (sshConfig.enabled) {
+        result = await queryViaSSH(sql, false);
+      } else {
+        result = await queryDirect(sql, false);
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ table: tableName, columns: result }, null, 2),
           },
         ],
       };

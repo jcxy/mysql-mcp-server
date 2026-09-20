@@ -5,8 +5,11 @@
 ## 功能特性
 
 - 🔌 **双连接模式**: 支持直接连接和 SSH 隧道连接
+- 🔄 **SSH 自动重连**: SSH 隧道断线后自动重连（指数退避）
 - 🔍 **查询执行**: 执行 SELECT 查询并返回结果
 - ✏️ **数据操作**: 执行 INSERT、UPDATE、DELETE 等语句
+- 📋 **Schema 探索**: 列出表、查看表结构，帮助 AI 快速了解数据库
+- 🛡️ **安全机制**: 语句白名单、结果截断、只读模式
 - 🌍 **多环境支持**: 可配置多个数据库连接（开发、测试、生产等）
 
 ## 安装
@@ -170,6 +173,44 @@ cp config.example.js config.js
 
 **参数**:
 - `sql`: SQL 执行语句
+
+### mysql_list_tables
+
+列出当前数据库中的所有表。
+
+**参数**: 无
+
+**返回格式**:
+```json
+{
+  "tables": ["users", "orders", "products"],
+  "count": 3
+}
+```
+
+### mysql_describe_table
+
+查看指定表的结构（列名、类型、是否可空、键信息、默认值等）。
+
+**参数**:
+- `table`: 要查看结构的表名
+
+**返回格式**:
+```json
+{
+  "table": "users",
+  "columns": [
+    {
+      "Field": "id",
+      "Type": "int(11)",
+      "Null": "NO",
+      "Key": "PRI",
+      "Default": null,
+      "Extra": "auto_increment"
+    }
+  ]
+}
+```
 
 ## 使用场景
 
