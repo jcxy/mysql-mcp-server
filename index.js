@@ -54,6 +54,13 @@ let reconnectAttempts = 0;
 let reconnectTimer = null;
 const MAX_RECONNECT_DELAY = 30000; // 最大重连间隔 30 秒
 
+// 连接池（直连模式）
+let pool = null;
+
+// 事务连接（用于事务期间复用同一连接）
+let transactionConnection = null;
+let inTransaction = false;
+
 // 获取 SSH 连接参数
 function getSSHConnectOpts() {
   const connectOpts = {
@@ -210,40 +217,138 @@ function queryViaSSH(sql, isExecute = false) {
   });
 }
 
-// 直接连接 MySQL 查询
+// 初始化连接池（直连模式）
+function initPool() {
+  if (sshConfig.enabled) return;
+  pool = mysql.createPool({
+    host: dbConfig.host,
+    port: dbConfig.port,
+    user: dbConfig.user,
+    password: dbConfig.password,
+    database: dbConfig.database,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+  });
+}
+
+// 直接连接 MySQL 查询（使用连接池）
 function queryDirect(sql, isExecute = false) {
   return new Promise((resolve, reject) => {
-    const connection = mysql.createConnection({
-      host: dbConfig.host,
-      port: dbConfig.port,
-      user: dbConfig.user,
-      password: dbConfig.password,
-      database: dbConfig.database,
-    });
-
-    connection.on('error', (err) => {
-      reject(err);
-    });
-
-    if (isExecute) {
-      connection.execute(sql, (err, result) => {
-        connection.end();
-        if (err) {
-          reject(err);
-        } else {
-          resolve({ affectedRows: result.affectedRows, insertId: result.insertId });
-        }
-      });
-    } else {
-      connection.query(sql, (err, rows) => {
-        connection.end();
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
-        }
-      });
+    // 如果正在事务中，使用事务连接
+    if (inTransaction && transactionConnection) {
+      executeOnConnection(transactionConnection, sql, isExecute, resolve, reject);
+      return;
     }
+
+    // 否则从连接池获取连接
+    pool.getConnection((err, connection) => {
+      if (err) {
+        return reject(err);
+      }
+
+      executeOnConnection(connection, sql, isExecute, (result) => {
+        connection.release();
+        resolve(result);
+      }, (error) => {
+        connection.release();
+        reject(error);
+      });
+    });
+  });
+}
+
+// 在指定连接上执行查询
+function executeOnConnection(connection, sql, isExecute, resolve, reject) {
+  if (isExecute) {
+    connection.execute(sql, (err, result) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve({ affectedRows: result.affectedRows, insertId: result.insertId });
+      }
+    });
+  } else {
+    connection.query(sql, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  }
+}
+
+// 开始事务
+function beginTransaction() {
+  return new Promise((resolve, reject) => {
+    if (inTransaction) {
+      return reject(new Error('已在事务中，请先提交或回滚当前事务'));
+    }
+    if (sshConfig.enabled) {
+      return reject(new Error('SSH 模式暂不支持事务'));
+    }
+
+    pool.getConnection((err, connection) => {
+      if (err) return reject(err);
+
+      connection.beginTransaction((err) => {
+        if (err) {
+          connection.release();
+          return reject(err);
+        }
+        // 防止连接异常断开时进程崩溃
+        connection.on('error', (err) => {
+          console.error('[Transaction] Connection error:', err.message);
+          transactionConnection = null;
+          inTransaction = false;
+          connection.release();
+        });
+        transactionConnection = connection;
+        inTransaction = true;
+        resolve(true);
+      });
+    });
+  });
+}
+
+// 提交事务
+function commitTransaction() {
+  return new Promise((resolve, reject) => {
+    if (!inTransaction || !transactionConnection) {
+      return reject(new Error('当前没有活跃的事务'));
+    }
+
+    transactionConnection.commit((err) => {
+      transactionConnection.release();
+      transactionConnection = null;
+      inTransaction = false;
+      if (err) {
+        reject(err);
+      } else {
+        resolve(true);
+      }
+    });
+  });
+}
+
+// 回滚事务
+function rollbackTransaction() {
+  return new Promise((resolve, reject) => {
+    if (!inTransaction || !transactionConnection) {
+      return reject(new Error('当前没有活跃的事务'));
+    }
+
+    transactionConnection.rollback((err) => {
+      transactionConnection.release();
+      transactionConnection = null;
+      inTransaction = false;
+      if (err) {
+        reject(err);
+      } else {
+        resolve(true);
+      }
+    });
   });
 }
 
@@ -310,6 +415,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ['table'],
+        },
+      },
+      {
+        name: 'mysql_begin',
+        description: '开始一个事务（仅直连模式支持）',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'mysql_commit',
+        description: '提交当前事务',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'mysql_rollback',
+        description: '回滚当前事务',
+        inputSchema: {
+          type: 'object',
+          properties: {},
         },
       },
     ],
@@ -422,6 +551,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           },
         ],
       };
+    } else if (name === 'mysql_begin') {
+      // 开始事务
+      if (readOnly) {
+        return {
+          content: [{ type: 'text', text: '只读模式下不能开启事务' }],
+          isError: true,
+        };
+      }
+      await beginTransaction();
+      return {
+        content: [{ type: 'text', text: '事务已开始' }],
+      };
+    } else if (name === 'mysql_commit') {
+      // 提交事务
+      await commitTransaction();
+      return {
+        content: [{ type: 'text', text: '事务已提交' }],
+      };
+    } else if (name === 'mysql_rollback') {
+      // 回滚事务
+      await rollbackTransaction();
+      return {
+        content: [{ type: 'text', text: '事务已回滚' }],
+      };
     } else {
       throw new Error(`Unknown tool: ${name}`);
     }
@@ -442,6 +595,8 @@ async function main() {
   try {
     if (sshConfig.enabled) {
       await initSSH();
+    } else {
+      initPool();
     }
 
     const transport = new StdioServerTransport();
