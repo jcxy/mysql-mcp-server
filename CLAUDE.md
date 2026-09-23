@@ -14,27 +14,36 @@ npm install
 
 # 运行服务器 (需要 MCP 客户端如 Claude Desktop)
 node index.js
+
+# 运行测试
+npm test
 ```
 
 ## 架构
 
-**入口文件**: `index.js` - 包含所有服务器逻辑
+**模块划分**（每个模块可通过自己的接口独立测试）:
+- `index.js` — 组装入口：加载配置、选定后端、装配 MCP 服务器；含入口守卫，可被测试导入而不启动
+- `lib/config.js` — 配置解析纯函数 `loadConfig(env, fileConfig)`
+- `lib/backend/pool-backend.js` — 直连模式后端（连接池 + 事务状态私有化）
+- `lib/backend/ssh-backend.js` — SSH 隧道后端（forwardOut 临时连接 + 指数退避重连）
+- `lib/tools.js` — 工具定义与 `handleToolCall(name, args, deps)` 分派（咽喉点：白名单、只读门控、结果截断统一在此强制）
+- `lib/validation.js` — 语句白名单、MAX_ROWS 解析、结果截断（纯函数）
+
+**后端统一接口**: `init / query / execute / begin / commit / rollback`——部署模式在启动时一次性选定，运行期不再感知 SSH 与直连的差异
 
 **两种连接模式**:
-1. **直连模式**: 直接连接 MySQL 服务器 (通过 `MYSQL_HOST`, `MYSQL_PORT` 等配置)
-2. **SSH 隧道模式**: 通过 SSH 跳板机连接 (通过 `SSH_ENABLED=true` 启用)
+1. **直连模式**: mysql2 连接池 (connectionLimit: 10)，支持事务
+2. **SSH 隧道模式**: 每次查询经 forwardOut 建立临时连接，断线自动重连，不支持事务
 
 **配置来源** (优先级从高到低):
 1. 环境变量 (推荐，在 MCP 客户端配置中设置)
 2. `config.js` 文件 (从 `config.example.js` 复制)
 
 **提供的 MCP 工具**:
-- `mysql_query`: 执行 SELECT 查询，返回结果行 JSON
+- `mysql_query`: 只读查询（语句白名单），返回 `{rows, truncated, returnedRows, maxRows}`
 - `mysql_execute`: 执行 INSERT/UPDATE/DELETE，返回 `{affectedRows, insertId}`
-
-**连接流程**:
-1. 启动时，若 `SSH_ENABLED=true`，先建立 SSH 连接
-2. 每次查询创建新连接（非连接池），查询完成后关闭
+- `mysql_list_tables` / `mysql_describe_table`: schema 探索
+- `mysql_begin` / `mysql_commit` / `mysql_rollback`: 事务控制（仅直连模式）
 
 ## 环境变量
 
