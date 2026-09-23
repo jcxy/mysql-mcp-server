@@ -253,6 +253,26 @@ cp config.example.js config.js
 - **默认非只读模式**：生产环境建议设置 `READ_ONLY=true` 防止 AI 误操作
 - `mysql_query` 仅允许只读语句（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH...SELECT），变更语句请使用 `mysql_execute`
 
+## 变更记录
+
+### v1.2.0
+
+**架构重构**：单文件拆分为模块化结构（`lib/config.js`、`lib/backend/`、`lib/tools.js`），安全强制（语句白名单、只读门控、结果截断）统一收敛到工具分派咽喉点，并新增 `npm test` 冒烟测试。
+
+**行为变更**：
+- 修复：事务提交/回滚失败时，未决事务的连接不再归还连接池（改为销毁），避免污染池中连接
+- 修复：事务连接异常断开时正确清理事务状态，消除竞态
+- `mysql_list_tables` / `mysql_describe_table` 结果也受 `MAX_ROWS` 截断
+- 事务工具成功消息改为 JSON 格式（`{"status": "..."}`）
+- SSH 错误消息改为中文并注明自动重连状态
+
+### v1.1.0
+
+- 安全机制：语句白名单、结果截断（`MAX_ROWS`）、只读模式（`READ_ONLY`）
+- SSH 断线自动重连（指数退避）
+- Schema 探索工具：`mysql_list_tables`、`mysql_describe_table`
+- 连接池与事务支持：`mysql_begin` / `mysql_commit` / `mysql_rollback`
+
 ## License
 
 MIT
