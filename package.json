@@ -1,19 +1,49 @@
 {
-  "name": "mysql-mcp-server",
-  "version": "1.2.0",
-  "description": "A MySQL MCP server that enables AI assistants to interact with MySQL databases",
+  "name": "mysql2-mcp-server",
+  "version": "1.3.0",
+  "description": "MySQL MCP server that enables AI assistants to interact with MySQL databases. Supports direct connection, SSH tunnel, connection pool, transactions, and security enforcement.",
   "main": "index.js",
   "type": "module",
+  "bin": {
+    "mysql2-mcp-server": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "README.md",
+    "config.example.js"
+  ],
+  "engines": {
+    "node": ">=18.14.1"
+  },
   "scripts": {
     "start": "node index.js",
-    "test": "node smoke-test.js"
+    "test": "node smoke-test.js",
+    "prepublishOnly": "node smoke-test.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "mcp",
+    "mysql",
+    "mysql2",
+    "model-context-protocol",
+    "ssh-tunnel",
+    "database",
+    "ai-tools"
+  ],
+  "author": "jcxy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jcxy/mysql-mcp-server.git"
+  },
+  "homepage": "https://github.com/jcxy/mysql-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/jcxy/mysql-mcp-server/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0",
     "mysql2": "^3.18.0",
+    "mysql2-mcp-server": "file:mysql2-mcp-server-1.3.0.tgz",
     "ssh2": "^1.17.0"
   }
 }

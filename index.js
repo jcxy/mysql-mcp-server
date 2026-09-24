@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * MySQL MCP Server — 组装入口
  * 
@@ -14,11 +15,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
-import config from './config.js';
 import { loadConfig } from './lib/config.js';
 import { createPoolBackend } from './lib/backend/pool-backend.js';
 import { createSSHBackend } from './lib/backend/ssh-backend.js';
@@ -28,8 +28,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
 
+// 可选配置文件加载：优先用户当前工作目录（npx 场景），回退包目录（源码场景），均无则仅用环境变量
+async function loadFileConfig() {
+  const candidates = [join(process.cwd(), 'config.js'), join(__dirname, 'config.js')];
+  for (const p of candidates) {
+    if (!existsSync(p)) continue;
+    try {
+      return (await import(pathToFileURL(p).href)).default;
+    } catch (error) {
+      console.error(`[WARN] 加载配置文件失败 (${p}): ${error.message}`);
+    }
+  }
+  return {};
+}
+
 // 配置解析（环境变量 > config.js > 默认值）
-const cfg = loadConfig(process.env, config);
+const cfg = loadConfig(process.env, await loadFileConfig());
 
 // 启动时一次性选定数据库后端（部署拓扑在这里固化，运行期不再感知模式）
 const db = cfg.ssh.enabled

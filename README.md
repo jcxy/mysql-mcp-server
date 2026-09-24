@@ -16,32 +16,45 @@
 
 ## 安装
 
+### 方式一：npx 直接运行（推荐，无需克隆仓库）
+
+无需安装，MCP 客户端会通过 npx 自动下载并运行：
+
 ```bash
-# 克隆仓库
+npx -y mysql2-mcp-server
+```
+
+### 方式二：全局安装
+
+```bash
+npm install -g mysql2-mcp-server
+mysql2-mcp-server
+```
+
+### 方式三：从源码运行
+
+```bash
 git clone https://github.com/jcxy/mysql-mcp-server.git
-
-# 进入目录
 cd mysql-mcp-server
-
-# 安装依赖
 npm install
+npm start
 ```
 
 ## 配置方式
 
 ### 方式一：环境变量（推荐）
 
-在 MCP 客户端配置中通过环境变量传递数据库连接信息，无需修改代码。
+在 MCP 客户端配置中通过环境变量传递数据库连接信息，无需修改代码。npx 方式只能使用这种方式。
 
 ### 方式二：配置文件
 
-复制配置模板并修改：
+在**运行命令时所在的目录**放置 `config.js`（从 `config.example.js` 复制修改），服务器会自动加载：
 
 ```bash
 cp config.example.js config.js
 ```
 
-然后编辑 `config.js` 文件填入你的数据库信息。
+然后编辑 `config.js` 文件填入你的数据库信息。查找顺序：当前工作目录 → 安装目录；均不存在时仅使用环境变量。
 
 ## 在 Claude Desktop 中使用
 
@@ -50,14 +63,14 @@ cp config.example.js config.js
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-### 基础配置示例
+### 基础配置示例（npx 方式，推荐）
 
 ```json
 {
   "mcpServers": {
     "mysql": {
-      "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "command": "npx",
+      "args": ["-y", "mysql2-mcp-server"],
       "env": {
         "MYSQL_HOST": "localhost",
         "MYSQL_PORT": "3306",
@@ -78,8 +91,8 @@ cp config.example.js config.js
 {
   "mcpServers": {
     "mysql-prod": {
-      "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "command": "npx",
+      "args": ["-y", "mysql2-mcp-server"],
       "env": {
         "SSH_ENABLED": "true",
         "SSH_HOST": "ssh.example.com",
@@ -93,8 +106,8 @@ cp config.example.js config.js
       }
     },
     "mysql-dev": {
-      "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "command": "npx",
+      "args": ["-y", "mysql2-mcp-server"],
       "env": {
         "MYSQL_HOST": "192.168.1.100",
         "MYSQL_PORT": "3306",
@@ -103,8 +116,8 @@ cp config.example.js config.js
       }
     },
     "mysql-test": {
-      "command": "node",
-      "args": ["/path/to/mysql-mcp-server/index.js"],
+      "command": "npx",
+      "args": ["-y", "mysql2-mcp-server"],
       "env": {
         "MYSQL_HOST": "192.168.1.101",
         "MYSQL_PORT": "3306",
@@ -254,6 +267,12 @@ cp config.example.js config.js
 - `mysql_query` 仅允许只读语句（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH...SELECT），变更语句请使用 `mysql_execute`
 
 ## 变更记录
+
+### v1.3.0
+
+- 支持 npx 运行：`npx -y mysql2-mcp-server`，无需克隆仓库（新增 bin 入口）
+- `config.js` 改为可选：从当前工作目录加载，npx 场景下不存在也不影响启动
+- `package.json` 补全 npm 发布元数据（files 白名单、engines、repository 等）
 
 ### v1.2.0
 
