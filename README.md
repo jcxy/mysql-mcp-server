@@ -1,5 +1,15 @@
 # MySQL MCP Server
 
+[![npm version](https://img.shields.io/npm/v/mysql2-mcp-server)](https://www.npmjs.com/package/mysql2-mcp-server)
+[![npm downloads](https://img.shields.io/npm/dm/mysql2-mcp-server)](https://www.npmjs.com/package/mysql2-mcp-server)
+[![Node.js Version](https://img.shields.io/node/v/mysql2-mcp-server)](https://www.npmjs.com/package/mysql2-mcp-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![GitHub Issues](https://img.shields.io/github/issues/jcxy/mysql-mcp-server)](https://github.com/jcxy/mysql-mcp-server/issues)
+
+中文 | [English](./README.en.md)
+
+> 🌐 **English documentation**: see [README.en.md](./README.en.md)
+
 一个用于连接 MySQL 数据库的 MCP (Model Context Protocol) 服务器，支持直连和 SSH 隧道两种连接方式，让 AI 助手能够直接与 MySQL 数据库交互。
 
 ## 功能特性
@@ -265,6 +275,27 @@ cp config.example.js config.js
 - SSH 隧道模式适合连接内网或受保护的数据库
 - **默认非只读模式**：生产环境建议设置 `READ_ONLY=true` 防止 AI 误操作
 - `mysql_query` 仅允许只读语句（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH...SELECT），变更语句请使用 `mysql_execute`
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request：
+
+1. Fork 本仓库并创建特性分支
+2. 提交前请确保 `npm test` 全部通过
+3. 提交 PR 并描述变更内容
+
+Bug 反馈请使用 [Bug 报告模板](https://github.com/jcxy/mysql-mcp-server/issues/new?template=bug_report.yml)，功能建议请使用[功能建议模板](https://github.com/jcxy/mysql-mcp-server/issues/new?template=feature_request.yml)。
+
+## 发布流程（维护者）
+
+推送到 npm registry 由 GitHub Actions 自动完成：
+
+```bash
+npm version minor   # 行为变更用 minor；纯修复用 patch
+git push --tags
+```
+
+推送 `v*` 标签后会自动运行测试并发布到 npm（需在仓库 Secrets 中配置 `NPM_TOKEN`）。
 
 ## 变更记录
 

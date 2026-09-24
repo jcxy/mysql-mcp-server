@@ -1,0 +1,54 @@
+name: 🐛 Bug 报告 / Bug Report
+description: 报告服务器运行中的问题 / Report a problem with the server
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量详细描述问题，英文或中文均可。
+        Thanks for reporting! Please describe the issue in as much detail as possible. English or Chinese is fine.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述 / Description
+      description: 发生了什么？期望发生什么？/ What happened? What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 配置环境变量 ...
+        2. 调用工具 mysql_query，参数 ...
+        3. 返回错误 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误日志 / Error logs
+      description: MCP 客户端日志或服务器 stderr 输出 / MCP client logs or server stderr output
+      render: shell
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 连接模式 / Connection mode
+      options:
+        - 直连 / Direct
+        - SSH 隧道 / SSH tunnel
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: 环境信息 / Environment
+      description: 操作系统、Node.js 版本、MySQL 版本、MCP 客户端（如 Claude Desktop）/ OS, Node.js version, MySQL version, MCP client (e.g. Claude Desktop)
+      placeholder: Windows 11, Node 20.10, MySQL 8.0, Claude Desktop
+    validations:
+      required: true
