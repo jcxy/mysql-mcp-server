@@ -135,7 +135,7 @@ export default {
 }
 ```
 
-On Linux/macOS tighten permissions: `chmod 600 ~/.mysql-mcp/credentials.json` (the Windows user profile is readable only by you by default). The path can be overridden with the `MYSQL_MCP_CREDENTIALS_FILE` environment variable. When the credentials file is absent, the server falls back to passwords from environment variables / `config.js` (legacy compatibility) and does not block startup.
+On Linux/macOS tighten permissions: `chmod 600 ~/.mysql-mcp/credentials.json` (the Windows user profile is readable only by you by default). The path can be overridden with the `MYSQL_MCP_CREDENTIALS_FILE` environment variable. **In the multi-environment format, each environment's secrets come only from the credentials file** (passwords in environment variables / `config.js` do not apply); a missing credentials file does not block startup — the affected environment will try to connect with an empty password. The legacy (single-environment) password fallback chain is unaffected.
 
 **Step 3: MCP client config with zero secrets**:
 
@@ -316,7 +316,7 @@ Then point the prod environment at that account and enable `readOnly: true` (the
 - SSH tunnel mode is suited for intranet or protected databases; connections are established lazily — environments never queried never connect
 - **Read-only mode is off by default**: for production, combine a database-side read-only account with `readOnly: true` (see "Hardening production reads" above)
 - `mysql_query` only accepts read-only statements (SELECT/SHOW/DESCRIBE/EXPLAIN/WITH...SELECT); use `mysql_execute` for changes
-- Legacy single-connection configs need no changes after upgrading: they map automatically to a single environment named `default`, behavior unchanged
+- Legacy single-connection configs need no changes after upgrading: they map automatically to a single environment named `default` with unchanged config-parsing behavior (connections are now lazy: startup no longer refuses to start when the database is unreachable; the error surfaces on first call)
 
 ## Contributing
 
@@ -350,7 +350,7 @@ Pushing a `v*` tag runs the tests and publishes to npm automatically (requires `
 - Per-environment read-only mode: `mysql_execute` / `mysql_begin` are fully disabled in readOnly environments; docs provide the standard least-privilege read-only account grants (the only unbypassable layer)
 - Independent connection pool / SSH tunnel / transaction state per environment; lazy connections (zero connections at startup; never-queried environments never connect); one environment's failure does not affect others
 - Startup structural validation: invalid environment names, missing default-environment declaration, etc. refuse to start
-- Backward compatible: legacy single-connection configs and pure environment-variable setups map automatically to a single `default` environment — zero changes on upgrade
+- Backward compatible: legacy single-connection configs and pure environment-variable setups map automatically to a single `default` environment — no config changes needed on upgrade (connections are now lazy; an unreachable database no longer blocks startup)
 
 ### v1.3.0
 

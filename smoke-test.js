@@ -202,6 +202,8 @@ const okName = loadConfig({}, { environments: { dev_1: { host: 'h' } } }, {});
 assert('合法环境名（字母数字下划线）通过', !okName.errors.length && okName.defaultEnvironment === 'dev_1');
 const badEnvType = loadConfig({}, { environments: 'dev' }, {});
 assert('environments 非对象拒启', badEnvType.errors.length > 0);
+const emptyEnvs = loadConfig({}, { environments: {} }, {});
+assert('environments 空对象拒启', emptyEnvs.errors.length > 0);
 
 // 24. 多环境 SSH 结构：隧道配置逐环境 + 秘密来自凭据 + remoteHost 回退本环境 db.host
 const sshFile = {

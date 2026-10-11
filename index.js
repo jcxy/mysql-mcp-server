@@ -98,6 +98,10 @@ function createLazyBackend(name, factory) {
         })
         .catch((error) => {
           initPromise = null; // 允许下次调用重试
+          // 丢弃失败候选前释放资源（SSH 实例否则会常驻指数退避重连循环）
+          try {
+            candidate.close?.();
+          } catch {}
           throw tagError(error);
         });
     }
@@ -108,7 +112,7 @@ function createLazyBackend(name, factory) {
     if (error.envTagged) {
       return error;
     }
-    const tagged = new Error(`环境 "${name}": ${error.message}`);
+    const tagged = new Error(`环境 "${name}": ${error.message}`, { cause: error });
     tagged.envTagged = true;
     return tagged;
   }

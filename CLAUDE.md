@@ -23,13 +23,13 @@ npm test
 
 **模块划分**（每个模块可通过自己的接口独立测试）:
 - `index.js` — 组装入口：加载配置、选定后端、装配 MCP 服务器；含入口守卫，可被测试导入而不启动
-- `lib/config.js` — 配置解析纯函数 `loadConfig(env, fileConfig)`
+- `lib/config.js` — 配置解析纯函数 `loadConfig(env, fileConfig, credentials)`（credentials 为装配层读出的凭据对象）
 - `lib/backend/pool-backend.js` — 直连模式后端（连接池 + 事务状态私有化）
 - `lib/backend/ssh-backend.js` — SSH 隧道后端（forwardOut 临时连接 + 指数退避重连）
 - `lib/tools.js` — 工具定义（`buildToolDefinitions(envMeta)` 环境感知工厂）与 `handleToolCall(name, args, deps)` 分派（咽喉点：环境路由、白名单、per-env 只读门控、per-env 截断统一在此强制；deps 为环境注册表形状 `{ environments, defaultEnvironment }`，旧单环境形状自动映射为 default 环境）
 - `lib/validation.js` — 语句白名单、MAX_ROWS 解析、结果截断（纯函数）
 
-**后端统一接口**: `init / query / execute / begin / commit / rollback`——部署模式在启动时一次性选定，运行期不再感知 SSH 与直连的差异
+**后端统一接口**: `init / query / execute / begin / commit / rollback / close`（close 供装配层丢弃失败实例时释放资源；SSH 实例 close 后停止重连循环）——部署模式在启动时一次性选定，运行期不再感知 SSH 与直连的差异
 
 **两种连接模式**:
 1. **直连模式**: mysql2 连接池 (connectionLimit: 10)，支持事务
