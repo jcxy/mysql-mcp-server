@@ -87,25 +87,22 @@ cp config.example.json ~/.mysql-mcp/config.json
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-### 基础配置示例（npx 方式，推荐）
+### MCP 客户端基础配置示例（npx 方式）
+
+数据库连接信息只存放在 `~/.mysql-mcp/config.json`（见上方「配置方式」），MCP 客户端配置中不出现任何账号密码：
 
 ```json
 {
   "mcpServers": {
     "mysql": {
       "command": "npx",
-      "args": ["-y", "mysql2-mcp-server"],
-      "env": {
-        "MYSQL_HOST": "localhost",
-        "MYSQL_PORT": "3306",
-        "MYSQL_USER": "root",
-        "MYSQL_PASSWORD": "your_password",
-        "MYSQL_DATABASE": "your_database"
-      }
+      "args": ["-y", "mysql2-mcp-server"]
     }
   }
 }
 ```
+
+环境变量（`MYSQL_*`/`SSH_*`）仅在无 `environments` 键的单环境配置下生效，优先级高于 `config.json`；如需临时覆盖单个变量，可在 `env` 字段中按需添加（详见[环境变量说明](#环境变量说明)）。
 
 ### 多环境配置示例
 

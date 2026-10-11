@@ -85,25 +85,22 @@ Pass connection settings as environment variables in your MCP client config — 
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-### Basic example (npx, recommended)
+### Basic MCP client config (npx)
+
+Database connection details live only in `~/.mysql-mcp/config.json` (see "Configuration" above); no credentials appear in the MCP client config:
 
 ```json
 {
   "mcpServers": {
     "mysql": {
       "command": "npx",
-      "args": ["-y", "mysql2-mcp-server"],
-      "env": {
-        "MYSQL_HOST": "localhost",
-        "MYSQL_PORT": "3306",
-        "MYSQL_USER": "root",
-        "MYSQL_PASSWORD": "your_password",
-        "MYSQL_DATABASE": "your_database"
-      }
+      "args": ["-y", "mysql2-mcp-server"]
     }
   }
 }
 ```
+
+Environment variables (`MYSQL_*`/`SSH_*`) only apply to single-environment configs (without an `environments` key) and take precedence over `config.json`; add individual variables to the `env` field only when you need a temporary override (see [Environment Variables](#environment-variables)).
 
 ### Multi-environment example
 
