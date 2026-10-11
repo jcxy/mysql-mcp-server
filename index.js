@@ -71,11 +71,73 @@ if (cfg.errors.length > 0) {
   process.exit(1);
 }
 
-// 逐环境选定数据库后端（部署拓扑在这里固化；T3 将改为惰性建连）
+/**
+ * 惰性 backend 包装：首次调用时才建池/开隧道，启动期零连接
+ * - init 成功后实例固化；失败则清除记忆化，下次调用可重试
+ * - 所有错误标注来源环境（pool 的连接失败发生在逐查询而非 init，也需标注）
+ * - 失败仅影响该环境的调用（handleToolCall 逐环境隔离）
+ */
+function createLazyBackend(name, factory) {
+  let backend = null;
+  let initPromise = null;
+
+  async function ensure() {
+    if (backend) {
+      return backend;
+    }
+    if (!initPromise) {
+      const candidate = factory();
+      initPromise = (async () => {
+        await candidate.init();
+        return candidate;
+      })()
+        .then((ready) => {
+          backend = ready;
+          console.error(`[env] ${name} 连接已建立`);
+          return ready;
+        })
+        .catch((error) => {
+          initPromise = null; // 允许下次调用重试
+          throw tagError(error);
+        });
+    }
+    return initPromise;
+  }
+
+  function tagError(error) {
+    if (error.envTagged) {
+      return error;
+    }
+    const tagged = new Error(`环境 "${name}": ${error.message}`);
+    tagged.envTagged = true;
+    return tagged;
+  }
+
+  async function invoke(method, ...args) {
+    try {
+      const ready = await ensure();
+      return await ready[method](...args);
+    } catch (error) {
+      throw tagError(error);
+    }
+  }
+
+  return {
+    query: (sql) => invoke('query', sql),
+    execute: (sql) => invoke('execute', sql),
+    begin: () => invoke('begin'),
+    commit: () => invoke('commit'),
+    rollback: () => invoke('rollback'),
+  };
+}
+
+// 逐环境惰性 backend（部署拓扑在这里固化，连接延迟到首次调用）
 const environments = {};
 for (const [name, entry] of Object.entries(cfg.environments)) {
   environments[name] = {
-    db: entry.ssh.enabled ? createSSHBackend(entry.ssh, entry.db) : createPoolBackend(entry.db),
+    db: createLazyBackend(name, () =>
+      entry.ssh.enabled ? createSSHBackend(entry.ssh, entry.db) : createPoolBackend(entry.db)
+    ),
     readOnly: entry.readOnly,
     maxRows: entry.maxRows,
   };
@@ -113,12 +175,7 @@ server.setRequestHandler(CallToolRequestSchema, (request) => {
 
 async function main() {
   try {
-    // T2 过渡：启动时初始化全部环境（T3 改为惰性建连）
-    for (const [name, entry] of Object.entries(environments)) {
-      await entry.db.init();
-      console.error(`[env] ${name} 已就绪`);
-    }
-
+    // 启动期只做结构校验，不建立任何连接（惰性建连：环境首次被调用时才建池/开隧道）
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
@@ -126,7 +183,7 @@ async function main() {
     const defaultName = environmentRegistry.defaultEnvironment;
     const roEnvs = envNames.filter((n) => environments[n].readOnly);
     const roFlag = roEnvs.length > 0 ? ` [只读环境: ${roEnvs.join(', ')}]` : '';
-    console.error(`MySQL MCP Server v${pkg.version} running on stdio, 环境: ${envNames.join(', ')}（默认: ${defaultName}）${roFlag}`);
+    console.error(`MySQL MCP Server v${pkg.version} running on stdio, 环境: ${envNames.join(', ')}（默认: ${defaultName}）${roFlag}，连接将按需建立`);
   } catch (error) {
     console.error('Failed to start server:', error.message);
     process.exit(1);
