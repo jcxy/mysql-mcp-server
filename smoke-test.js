@@ -1,6 +1,6 @@
 // 冒烟测试：用 fake 后端驱动 handleToolCall，验证咽喉点逻辑（白名单、只读、截断、错误映射）
 // 运行：npm test
-import { handleToolCall } from './lib/tools.js';
+import { handleToolCall, buildToolDefinitions } from './lib/tools.js';
 import { loadConfig } from './lib/config.js';
 
 let passed = 0;
@@ -87,6 +87,78 @@ assert('loadConfig SSH 开关', cfg.ssh.enabled === true);
 assert('loadConfig 只读来自 config.js', cfg.readOnly === true);
 assert('loadConfig 非法 maxRows 回退 1000', cfg.maxRows === 1000);
 assert('loadConfig SSH remoteHost 跨块回退到 MYSQL_HOST', cfg.ssh.remoteHost === 'env-host');
+
+// ==================== 多环境注册表（T1: 环境路由 / per-env 门禁 / 回显）====================
+const devDb = fakeDb({ rows: [{ env: 'dev' }] });
+const prodDb = fakeDb({ rows: [{ env: 'prod' }] });
+const registryDeps = {
+  environments: {
+    dev: { db: devDb, readOnly: false, maxRows: 1000 },
+    prod: { db: prodDb, readOnly: true, maxRows: 5 },
+  },
+  defaultEnvironment: 'dev',
+};
+
+// 12. 默认环境路由 + environment 回显
+r = await handleToolCall('mysql_query', { sql: 'SELECT 1' }, registryDeps);
+let p = JSON.parse(r.content[0].text);
+assert('未传 environment 落到默认环境 dev', !r.isError && p.environment === 'dev' && devDb.calls.length === 1 && prodDb.calls.length === 0);
+
+// 13. 显式 environment 路由
+r = await handleToolCall('mysql_query', { sql: 'SELECT 1', environment: 'prod' }, registryDeps);
+p = JSON.parse(r.content[0].text);
+assert('environment=prod 路由到 prod 且回显', !r.isError && p.environment === 'prod' && prodDb.calls.length === 1);
+
+// 14. 未知环境报错并列出可用环境
+r = await handleToolCall('mysql_query', { sql: 'SELECT 1', environment: 'staging' }, registryDeps);
+assert('未知环境报错并列出 dev/prod', r.isError && r.content[0].text.includes('staging') && r.content[0].text.includes('dev') && r.content[0].text.includes('prod'));
+
+// 15. per-env 只读门禁互不影响
+r = await handleToolCall('mysql_execute', { sql: 'UPDATE t SET a=1', environment: 'prod' }, registryDeps);
+assert('prod 只读拒绝 execute', r.isError && r.content[0].text.includes('只读'));
+r = await handleToolCall('mysql_execute', { sql: 'UPDATE t SET a=1', environment: 'dev' }, registryDeps);
+assert('dev 非只读放行 execute', !r.isError);
+r = await handleToolCall('mysql_begin', { environment: 'prod' }, registryDeps);
+assert('prod 只读拒绝 begin', r.isError);
+
+// 16. per-env 截断各白生效
+const manyRowsEnv = Array.from({ length: 10 }, (_, i) => ({ i }));
+const sharedDb = fakeDb({ rows: manyRowsEnv });
+const truncDeps = {
+  environments: {
+    small: { db: sharedDb, readOnly: false, maxRows: 3 },
+    big: { db: sharedDb, readOnly: false, maxRows: 100 },
+  },
+  defaultEnvironment: 'small',
+};
+r = await handleToolCall('mysql_query', { sql: 'SELECT 1', environment: 'small' }, truncDeps);
+p = JSON.parse(r.content[0].text);
+assert('small 环境 maxRows=3 截断', !r.isError && p.truncated === true && p.returnedRows === 3);
+r = await handleToolCall('mysql_query', { sql: 'SELECT 1', environment: 'big' }, truncDeps);
+p = JSON.parse(r.content[0].text);
+assert('big 环境不截断', !r.isError && p.truncated === false && p.returnedRows === 10);
+
+// 17. 事务工具 environment 路由到对应实例
+r = await handleToolCall('mysql_begin', { environment: 'dev' }, registryDeps);
+assert('begin 路由到 dev 实例', !r.isError && devDb.calls.some((c) => c[0] === 'begin'));
+r = await handleToolCall('mysql_commit', { environment: 'dev' }, registryDeps);
+assert('commit 路由到 dev 实例', !r.isError && devDb.calls.some((c) => c[0] === 'commit'));
+r = await handleToolCall('mysql_rollback', { environment: 'dev' }, registryDeps);
+assert('rollback 路由到 dev 实例', !r.isError && devDb.calls.some((c) => c[0] === 'rollback'));
+
+// 18. 工具定义：全部含可选 environment 参数，描述列出环境名与默认环境
+const defs = buildToolDefinitions({ environmentNames: ['dev', 'prod'], defaultEnvironment: 'dev' });
+assert('7 个工具定义均含 environment 参数', defs.length === 7 && defs.every((d) => d.inputSchema.properties?.environment));
+assert('工具描述列出环境名与默认环境', defs[0].description.includes('dev') && defs[0].description.includes('prod') && defs[0].description.includes('默认'));
+
+// 19. 旧单环境 deps 形状仍兼容（映射为 default 环境）
+r = await handleToolCall('mysql_query', { sql: 'SELECT 1' }, deps);
+p = JSON.parse(r.content[0].text);
+assert('旧形状 deps 映射为 default 环境且行为不变', !r.isError && p.environment === 'default' && p.rows.length === 2);
+
+// 20. args 显式传 null：与升级前一致走 isError 路径，而非抛出未捕获 TypeError
+r = await handleToolCall('mysql_query', null, deps);
+assert('args=null 映射为 isError 而非未捕获异常', r.isError && r.content[0].text.includes('Error:'));
 
 console.log(`\n冒烟测试: ${passed} 通过, ${failed} 失败`);
 process.exit(failed > 0 ? 1 : 0);

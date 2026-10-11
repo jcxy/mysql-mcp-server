@@ -22,7 +22,7 @@ import { dirname, join } from 'path';
 import { loadConfig } from './lib/config.js';
 import { createPoolBackend } from './lib/backend/pool-backend.js';
 import { createSSHBackend } from './lib/backend/ssh-backend.js';
-import { toolDefinitions, handleToolCall } from './lib/tools.js';
+import { buildToolDefinitions, handleToolCall } from './lib/tools.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -50,6 +50,14 @@ const db = cfg.ssh.enabled
   ? createSSHBackend(cfg.ssh, cfg.db)
   : createPoolBackend(cfg.db);
 
+// 环境注册表：T1 阶段单环境（default）；T2/T3 扩展为多环境解析与每环境独立 backend
+const environmentRegistry = {
+  environments: {
+    default: { db, readOnly: cfg.readOnly, maxRows: cfg.maxRows },
+  },
+  defaultEnvironment: 'default',
+};
+
 const server = new Server(
   {
     name: 'mysql-server',
@@ -63,15 +71,16 @@ const server = new Server(
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools: toolDefinitions };
+  return {
+    tools: buildToolDefinitions({
+      environmentNames: Object.keys(environmentRegistry.environments),
+      defaultEnvironment: environmentRegistry.defaultEnvironment,
+    }),
+  };
 });
 
 server.setRequestHandler(CallToolRequestSchema, (request) => {
-  return handleToolCall(request.params.name, request.params.arguments, {
-    db,
-    readOnly: cfg.readOnly,
-    maxRows: cfg.maxRows,
-  });
+  return handleToolCall(request.params.name, request.params.arguments, environmentRegistry);
 });
 
 async function main() {
@@ -83,7 +92,8 @@ async function main() {
 
     const mode = cfg.ssh.enabled ? 'SSH Tunnel' : 'Direct (pool)';
     const roFlag = cfg.readOnly ? ' [只读模式]' : '';
-    console.error(`MySQL MCP Server v${pkg.version} running on stdio (${mode})${roFlag}, MAX_ROWS=${cfg.maxRows}`);
+    const envFlag = ` 环境: ${environmentRegistry.defaultEnvironment}(默认)`;
+    console.error(`MySQL MCP Server v${pkg.version} running on stdio (${mode})${roFlag}${envFlag}, MAX_ROWS=${cfg.maxRows}`);
   } catch (error) {
     console.error('Failed to start server:', error.message);
     process.exit(1);

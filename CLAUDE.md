@@ -26,7 +26,7 @@ npm test
 - `lib/config.js` — 配置解析纯函数 `loadConfig(env, fileConfig)`
 - `lib/backend/pool-backend.js` — 直连模式后端（连接池 + 事务状态私有化）
 - `lib/backend/ssh-backend.js` — SSH 隧道后端（forwardOut 临时连接 + 指数退避重连）
-- `lib/tools.js` — 工具定义与 `handleToolCall(name, args, deps)` 分派（咽喉点：白名单、只读门控、结果截断统一在此强制）
+- `lib/tools.js` — 工具定义（`buildToolDefinitions(envMeta)` 环境感知工厂）与 `handleToolCall(name, args, deps)` 分派（咽喉点：环境路由、白名单、per-env 只读门控、per-env 截断统一在此强制；deps 为环境注册表形状 `{ environments, defaultEnvironment }`，旧单环境形状自动映射为 default 环境）
 - `lib/validation.js` — 语句白名单、MAX_ROWS 解析、结果截断（纯函数）
 
 **后端统一接口**: `init / query / execute / begin / commit / rollback`——部署模式在启动时一次性选定，运行期不再感知 SSH 与直连的差异
@@ -39,8 +39,8 @@ npm test
 1. 环境变量 (推荐，在 MCP 客户端配置中设置)
 2. `config.js` 文件 (从 `config.example.js` 复制)
 
-**提供的 MCP 工具**:
-- `mysql_query`: 只读查询（语句白名单），返回 `{rows, truncated, returnedRows, maxRows}`
+**提供的 MCP 工具**（均支持可选 `environment` 参数路由到注册环境，成功返回回显实际作用的环境名）:
+- `mysql_query`: 只读查询（语句白名单），返回 `{environment, rows, truncated, returnedRows, maxRows}`
 - `mysql_execute`: 执行 INSERT/UPDATE/DELETE，返回 `{affectedRows, insertId}`
 - `mysql_list_tables` / `mysql_describe_table`: schema 探索
 - `mysql_begin` / `mysql_commit` / `mysql_rollback`: 事务控制（仅直连模式）
