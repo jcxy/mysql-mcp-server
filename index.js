@@ -16,6 +16,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { readFileSync, existsSync } from 'fs';
+import { homedir } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
@@ -42,20 +43,47 @@ async function loadFileConfig() {
   return {};
 }
 
-// 配置解析（环境变量 > config.js > 默认值）
-const cfg = loadConfig(process.env, await loadFileConfig());
+// 凭据文件加载薄层（接缝外唯一真实 I/O）：默认用户主目录约定路径，MYSQL_MCP_CREDENTIALS_FILE 可覆盖
+// 凭据文件为可选增强：不存在或解析失败时返回空对象，不阻断启动
+async function loadCredentials() {
+  const credPath = process.env.MYSQL_MCP_CREDENTIALS_FILE
+    || join(homedir(), '.mysql-mcp', 'credentials.json');
+  if (!existsSync(credPath)) {
+    return {};
+  }
+  try {
+    return JSON.parse(readFileSync(credPath, 'utf-8'));
+  } catch (error) {
+    console.error(`[WARN] 加载凭据文件失败 (${credPath}): ${error.message}，将继续以无凭据模式启动`);
+    return {};
+  }
+}
 
-// 启动时一次性选定数据库后端（部署拓扑在这里固化，运行期不再感知模式）
-const db = cfg.ssh.enabled
-  ? createSSHBackend(cfg.ssh, cfg.db)
-  : createPoolBackend(cfg.db);
+// 配置解析（新格式：结构来自 config.js + 秘密来自凭据文件；旧格式：环境变量 > 凭据 > config.js > 默认值）
+const cfg = loadConfig(process.env, await loadFileConfig(), await loadCredentials());
 
-// 环境注册表：T1 阶段单环境（default）；T2/T3 扩展为多环境解析与每环境独立 backend
+// 启动期结构校验：配置不合法直接拒启（连接在 T3 改为惰性建立）
+if (cfg.errors.length > 0) {
+  console.error('配置校验失败，拒绝启动:');
+  for (const message of cfg.errors) {
+    console.error(`  - ${message}`);
+  }
+  process.exit(1);
+}
+
+// 逐环境选定数据库后端（部署拓扑在这里固化；T3 将改为惰性建连）
+const environments = {};
+for (const [name, entry] of Object.entries(cfg.environments)) {
+  environments[name] = {
+    db: entry.ssh.enabled ? createSSHBackend(entry.ssh, entry.db) : createPoolBackend(entry.db),
+    readOnly: entry.readOnly,
+    maxRows: entry.maxRows,
+  };
+}
+
 const environmentRegistry = {
-  environments: {
-    default: { db, readOnly: cfg.readOnly, maxRows: cfg.maxRows },
-  },
-  defaultEnvironment: 'default',
+  environments,
+  defaultEnvironment: cfg.defaultEnvironment,
 };
 
 const server = new Server(
@@ -85,15 +113,20 @@ server.setRequestHandler(CallToolRequestSchema, (request) => {
 
 async function main() {
   try {
-    await db.init();
+    // T2 过渡：启动时初始化全部环境（T3 改为惰性建连）
+    for (const [name, entry] of Object.entries(environments)) {
+      await entry.db.init();
+      console.error(`[env] ${name} 已就绪`);
+    }
 
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
-    const mode = cfg.ssh.enabled ? 'SSH Tunnel' : 'Direct (pool)';
-    const roFlag = cfg.readOnly ? ' [只读模式]' : '';
-    const envFlag = ` 环境: ${environmentRegistry.defaultEnvironment}(默认)`;
-    console.error(`MySQL MCP Server v${pkg.version} running on stdio (${mode})${roFlag}${envFlag}, MAX_ROWS=${cfg.maxRows}`);
+    const envNames = Object.keys(environments);
+    const defaultName = environmentRegistry.defaultEnvironment;
+    const roEnvs = envNames.filter((n) => environments[n].readOnly);
+    const roFlag = roEnvs.length > 0 ? ` [只读环境: ${roEnvs.join(', ')}]` : '';
+    console.error(`MySQL MCP Server v${pkg.version} running on stdio, 环境: ${envNames.join(', ')}（默认: ${defaultName}）${roFlag}`);
   } catch (error) {
     console.error('Failed to start server:', error.message);
     process.exit(1);

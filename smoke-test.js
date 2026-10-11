@@ -80,13 +80,13 @@ assert('只读模式拒绝 begin', r.isError);
 r = await handleToolCall('nope', {}, deps);
 assert('未知工具报错', r.isError && r.content[0].text.includes('Unknown tool'));
 
-// 11. loadConfig 纯函数：env 优先 + 跨块回退
+// 11. loadConfig 纯函数：env 优先 + 跨块回退（返回环境注册表形状，旧格式映射 default 单环境）
 const cfg = loadConfig({ MYSQL_HOST: 'env-host', SSH_ENABLED: 'true' }, { host: 'file-host', readOnly: true, maxRows: 'abc' });
-assert('loadConfig env 优先', cfg.db.host === 'env-host');
-assert('loadConfig SSH 开关', cfg.ssh.enabled === true);
-assert('loadConfig 只读来自 config.js', cfg.readOnly === true);
-assert('loadConfig 非法 maxRows 回退 1000', cfg.maxRows === 1000);
-assert('loadConfig SSH remoteHost 跨块回退到 MYSQL_HOST', cfg.ssh.remoteHost === 'env-host');
+assert('loadConfig env 优先', cfg.environments.default.db.host === 'env-host');
+assert('loadConfig SSH 开关', cfg.environments.default.ssh.enabled === true);
+assert('loadConfig 只读来自 config.js', cfg.environments.default.readOnly === true);
+assert('loadConfig 非法 maxRows 回退 1000', cfg.environments.default.maxRows === 1000);
+assert('loadConfig SSH remoteHost 跨块回退到 MYSQL_HOST', cfg.environments.default.ssh.remoteHost === 'env-host');
 
 // ==================== 多环境注册表（T1: 环境路由 / per-env 门禁 / 回显）====================
 const devDb = fakeDb({ rows: [{ env: 'dev' }] });
@@ -159,6 +159,63 @@ assert('旧形状 deps 映射为 default 环境且行为不变', !r.isError && p
 // 20. args 显式传 null：与升级前一致走 isError 路径，而非抛出未捕获 TypeError
 r = await handleToolCall('mysql_query', null, deps);
 assert('args=null 映射为 isError 而非未捕获异常', r.isError && r.content[0].text.includes('Error:'));
+
+// ==================== 多环境配置解析（T2: environments 解析 / 凭据合并 / 启动期校验）====================
+const multiFile = {
+  defaultEnvironment: 'dev',
+  environments: {
+    dev: { host: 'dev-host', user: 'dev-user', database: 'devdb', readOnly: false, maxRows: 500 },
+    prod: { host: 'prod-host', user: 'ai_readonly', database: 'proddb', readOnly: true, maxRows: 100 },
+  },
+};
+const multiCreds = { dev: { password: 'dev-secret' }, prod: { password: 'prod-secret' } };
+
+// 21. 多环境解析 + 凭据合并
+const m = loadConfig({ MYSQL_HOST: 'should-be-ignored' }, multiFile, multiCreds);
+assert('多环境解析出两个环境且无错误', !m.errors.length && Object.keys(m.environments).length === 2);
+assert('多环境 defaultEnvironment 生效', m.defaultEnvironment === 'dev');
+assert('dev 密码来自凭据文件', m.environments.dev.db.password === 'dev-secret');
+assert('prod 密码来自凭据文件且 readOnly=true', m.environments.prod.db.password === 'prod-secret' && m.environments.prod.readOnly === true);
+assert('多环境下 MYSQL_* 环境变量不作用于环境定义', m.environments.dev.db.host === 'dev-host');
+assert('per-env maxRows 解析', m.environments.dev.maxRows === 500 && m.environments.prod.maxRows === 100);
+
+// 22. 旧格式映射 default 单环境 + 密码优先级 env > 凭据 > config.js
+const legacy1 = loadConfig({ MYSQL_HOST: 'env-host' }, { host: 'file-host' }, {});
+assert('旧格式映射 default 单环境', !legacy1.errors.length && legacy1.defaultEnvironment === 'default' && legacy1.environments.default.db.host === 'env-host');
+const legacy2 = loadConfig({}, { host: 'file-host', password: 'file-pw' }, { default: { password: 'cred-pw' } });
+assert('旧格式密码优先级 env>凭据>config.js', legacy2.environments.default.db.password === 'cred-pw');
+const legacy3 = loadConfig({}, { host: 'file-host', password: 'file-pw' }, {});
+assert('无凭据时回退 config.js 密码', legacy3.environments.default.db.password === 'file-pw');
+const legacy4 = loadConfig({}, { host: 'file-host' }, {});
+assert('无凭据无密码不阻断（空密码）', !legacy4.errors.length && legacy4.environments.default.db.password === '');
+
+// 23. 启动期结构校验
+const single = loadConfig({}, { environments: { dev: { host: 'h' } } }, {});
+assert('单环境省略默认自动指向唯一环境', !single.errors.length && single.defaultEnvironment === 'dev');
+const noDefault = loadConfig({}, { environments: { dev: { host: 'h' }, prod: { host: 'h2' } } }, {});
+assert('多环境缺默认环境拒启', noDefault.errors.length > 0);
+const badDefault = loadConfig({}, { defaultEnvironment: 'staging', environments: { dev: { host: 'h' } } }, {});
+assert('默认环境指向未注册环境拒启', badDefault.errors.length > 0);
+const badName = loadConfig({}, { environments: { 'dev-1': { host: 'h' } } }, {});
+assert('非法环境名拒启', badName.errors.length > 0);
+const okName = loadConfig({}, { environments: { dev_1: { host: 'h' } } }, {});
+assert('合法环境名（字母数字下划线）通过', !okName.errors.length && okName.defaultEnvironment === 'dev_1');
+const badEnvType = loadConfig({}, { environments: 'dev' }, {});
+assert('environments 非对象拒启', badEnvType.errors.length > 0);
+
+// 24. 多环境 SSH 结构：隧道配置逐环境 + 秘密来自凭据 + remoteHost 回退本环境 db.host
+const sshFile = {
+  defaultEnvironment: 'prod',
+  environments: {
+    prod: { host: 'db-internal', port: 3307, ssh: { enabled: true, host: 'bastion', port: 2222, username: 'ops' } },
+  },
+};
+const sshCreds = { prod: { password: 'db-pw', ssh: { password: 'ssh-pw', privateKey: 'KEY', passphrase: 'PP' } } };
+const s = loadConfig({}, sshFile, sshCreds);
+const sp = s.environments.prod;
+assert('SSH 隧道结构逐环境解析', !s.errors.length && sp.ssh.enabled === true && sp.ssh.host === 'bastion' && sp.ssh.port === 2222);
+assert('SSH 秘密来自凭据文件', sp.ssh.password === 'ssh-pw' && sp.ssh.privateKey === 'KEY' && sp.ssh.passphrase === 'PP' && sp.db.password === 'db-pw');
+assert('SSH remoteHost 回退本环境 db.host、remotePort 回退 db.port', sp.ssh.remoteHost === 'db-internal' && sp.ssh.remotePort === 3307);
 
 console.log(`\n冒烟测试: ${passed} 通过, ${failed} 失败`);
 process.exit(failed > 0 ? 1 : 0);
