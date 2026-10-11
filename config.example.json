@@ -1,0 +1,39 @@
+{
+  "defaultEnvironment": "dev",
+
+  "environments": {
+    "dev": {
+      "host": "localhost",
+      "port": 3306,
+      "user": "dev_user",
+      "password": "dev_password",
+      "database": "devdb",
+
+      "readOnly": false,
+      "maxRows": 1000,
+
+      "ssh": {
+        "enabled": false,
+        "host": "ssh.example.com",
+        "port": 22,
+        "username": "your_user",
+        "password": "",
+        "privateKey": "",
+        "passphrase": "",
+        "remoteHost": "localhost",
+        "remotePort": 3306
+      }
+    },
+
+    "prod": {
+      "host": "prod-db.example.com",
+      "port": 3306,
+      "user": "ai_readonly",
+      "password": "readonly_password",
+      "database": "proddb",
+
+      "readOnly": true,
+      "maxRows": 100
+    }
+  }
+}

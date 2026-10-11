@@ -23,7 +23,7 @@ npm test
 
 **模块划分**（每个模块可通过自己的接口独立测试）:
 - `index.js` — 组装入口：加载配置、选定后端、装配 MCP 服务器；含入口守卫，可被测试导入而不启动
-- `lib/config.js` — 配置解析纯函数 `loadConfig(env, fileConfig, credentials)`（credentials 为装配层读出的凭据对象）
+- `lib/config.js` — 配置解析纯函数 `loadConfig(env, fileConfig)`
 - `lib/backend/pool-backend.js` — 直连模式后端（连接池 + 事务状态私有化）
 - `lib/backend/ssh-backend.js` — SSH 隧道后端（forwardOut 临时连接 + 指数退避重连）
 - `lib/tools.js` — 工具定义（`buildToolDefinitions(envMeta)` 环境感知工厂）与 `handleToolCall(name, args, deps)` 分派（咽喉点：环境路由、白名单、per-env 只读门控、per-env 截断统一在此强制；deps 为环境注册表形状 `{ environments, defaultEnvironment }`，旧单环境形状自动映射为 default 环境）
@@ -35,10 +35,9 @@ npm test
 1. **直连模式**: mysql2 连接池 (connectionLimit: 10)，支持事务
 2. **SSH 隧道模式**: 每次查询经 forwardOut 建立临时连接，断线自动重连，不支持事务
 
-**配置来源** (优先级从高到低):
-1. 环境变量 (推荐，在 MCP 客户端配置中设置；仅旧格式单环境生效)
-2. `config.js` 文件 (从 `config.example.js` 复制；支持多环境 `environments` + `defaultEnvironment`)
-3. 凭据文件 (多环境模式的秘密：默认 `~/.mysql-mcp/credentials.json`，`MYSQL_MCP_CREDENTIALS_FILE` 可覆盖；结构可提交、秘密不进仓库)
+**配置来源**:
+1. `~/.mysql-mcp/config.json` 配置文件（纯 JSON；支持多环境 `environments` + `defaultEnvironment`，结构与秘密同文件；路径 `MYSQL_MCP_CONFIG_FILE` 可覆盖）
+2. 环境变量（仅在无 `environments` 键的单环境格式下生效，优先级：环境变量 > config.json > 默认值）
 
 **提供的 MCP 工具**（均支持可选 `environment` 参数路由到注册环境，成功返回回显实际作用的环境名）:
 - `mysql_query`: 只读查询（语句白名单），返回 `{environment, rows, truncated, returnedRows, maxRows}`
@@ -55,7 +54,7 @@ npm test
 | `MYSQL_USER` | MySQL 用户名 | root |
 | `MYSQL_PASSWORD` | MySQL 密码 | - |
 | `MYSQL_DATABASE` | 默认数据库 | - |
-| `MYSQL_MCP_CREDENTIALS_FILE` | 凭据文件路径（多环境模式） | `~/.mysql-mcp/credentials.json` |
+| `MYSQL_MCP_CONFIG_FILE` | 配置文件路径 | `~/.mysql-mcp/config.json` |
 | `SSH_ENABLED` | 是否启用 SSH 隧道 | false |
 | `SSH_HOST` | SSH 服务器地址 | - |
 | `SSH_PORT` | SSH 服务器端口 | 22 |

@@ -21,7 +21,7 @@ An MCP (Model Context Protocol) server for MySQL databases. It supports both dir
 - 💼 **Transactions**: BEGIN/COMMIT/ROLLBACK support (direct mode)
 - 🛡️ **Security**: statement whitelist, result truncation, per-environment read-only mode
 - 🌍 **Multi-environment**: one server instance registers dev/prod etc.; calls route explicitly via an `environment` argument
-- 🔐 **Credential separation**: environment structure and permission policy are committable; secrets live in a user-home credentials file — zero secrets in the MCP config
+- 🔐 **Unified JSON config**: all environments, permissions and credentials live in a single `~/.mysql-mcp/config.json` — zero arguments in the MCP config
 
 ## Installation
 
@@ -51,23 +51,32 @@ npm start
 
 ## Configuration
 
-### Option 1: Environment variables (single environment, easy start)
+### Option 1: Config file (recommended)
 
-Pass connection settings as environment variables in your MCP client config — no code changes needed. The npx mode only supports this option.
-
-### Option 2: Config file (single environment)
-
-Place a `config.js` in **the directory where you run the command** (copy from `config.example.js`) and it will be loaded automatically:
+Create `~/.mysql-mcp/config.json` in your user home directory; the server loads it automatically at startup (if absent, only environment variables are used):
 
 ```bash
-cp config.example.js config.js
+mkdir -p ~/.mysql-mcp
+cp config.example.json ~/.mysql-mcp/config.json
 ```
 
-Then edit `config.js` with your database credentials. Lookup order: current working directory → install directory; if neither exists, only environment variables are used.
+Minimal single-environment config:
 
-### Option 3: Multi-environment + credential separation (recommended for production)
+```json
+{
+  "host": "localhost",
+  "port": 3306,
+  "user": "root",
+  "password": "your_password",
+  "database": "your_database"
+}
+```
 
-A single MCP server registers multiple environments (e.g. dev/prod); calls route explicitly via the `environment` argument. **Credential separation**: environment structure and read-only policy live in the committable `config.js`, while secrets live in a user-home credentials file — zero secrets in the MCP config. See the [multi-environment example](#multi-environment-example) below.
+Multi-environment setup: see the [multi-environment example](#multi-environment-example) below. The path can be overridden with the `MYSQL_MCP_CONFIG_FILE` environment variable (CI / multiple config sets). On Linux/macOS tighten permissions: `chmod 600 ~/.mysql-mcp/config.json` (the Windows user profile is readable only by you by default).
+
+### Option 2: Environment variables (single environment)
+
+Pass connection settings as environment variables in your MCP client config — no files needed. Single-environment precedence: environment variables > `config.json` > defaults.
 
 ## Using with Claude Desktop
 
@@ -98,46 +107,39 @@ A single MCP server registers multiple environments (e.g. dev/prod); calls route
 
 ### Multi-environment example
 
-A single MCP server registers dev and prod with credential separation: environment structure and read-only policy in `config.js`, passwords in the user-home credentials file.
+A single MCP server registers dev and prod; everything lives in one file, `~/.mysql-mcp/config.json` (structure and passwords together).
 
-**Step 1: write `config.js`** (committable, contains no secrets):
-
-```js
-export default {
-  defaultEnvironment: 'dev',
-  environments: {
-    dev: {
-      host: '192.168.1.100',
-      port: 3306,
-      user: 'dev_user',       // dev uses your full-privilege account; the AI can run DDL/DML freely
-      database: 'devdb',
-      readOnly: false,
-      maxRows: 1000,
-    },
-    prod: {
-      host: '10.0.0.5',
-      port: 3306,
-      user: 'ai_readonly',    // dedicated least-privilege read-only account (see "Hardening production reads")
-      database: 'proddb',
-      readOnly: true,         // MCP-side UX layer: mysql_execute / mysql_begin disabled on prod
-      maxRows: 100,
-    },
-  },
-};
-```
-
-**Step 2: write the credentials file** `~/.mysql-mcp/credentials.json` (secrets only, never committed):
+**Step 1: write `~/.mysql-mcp/config.json`**:
 
 ```json
 {
-  "dev":  { "password": "dev_password" },
-  "prod": { "password": "readonly_password" }
+  "defaultEnvironment": "dev",
+  "environments": {
+    "dev": {
+      "host": "192.168.1.100",
+      "port": 3306,
+      "user": "dev_user",
+      "password": "dev_password",
+      "database": "devdb",
+      "readOnly": false,
+      "maxRows": 1000
+    },
+    "prod": {
+      "host": "10.0.0.5",
+      "port": 3306,
+      "user": "ai_readonly",
+      "password": "readonly_password",
+      "database": "proddb",
+      "readOnly": true,
+      "maxRows": 100
+    }
+  }
 }
 ```
 
-On Linux/macOS tighten permissions: `chmod 600 ~/.mysql-mcp/credentials.json` (the Windows user profile is readable only by you by default). The path can be overridden with the `MYSQL_MCP_CREDENTIALS_FILE` environment variable. **In the multi-environment format, each environment's secrets come only from the credentials file** (passwords in environment variables / `config.js` do not apply); a missing credentials file does not block startup — the affected environment will try to connect with an empty password. The legacy (single-environment) password fallback chain is unaffected.
+Notes: dev uses your full-privilege account so the AI can run DDL/DML freely; prod uses a dedicated least-privilege read-only account (see "Hardening production reads" below) with `readOnly: true` (the MCP-side UX layer: mysql_execute / mysql_begin disabled on prod). In the multi-environment format, each environment's secrets come only from this file (`MYSQL_*`/`SSH_*` environment variables do not apply to environment definitions).
 
-**Step 3: MCP client config with zero secrets**:
+**Step 2: MCP client config with zero arguments**:
 
 ```json
 {
@@ -149,8 +151,6 @@ On Linux/macOS tighten permissions: `chmod 600 ~/.mysql-mcp/credentials.json` (t
   }
 }
 ```
-
-> Note: `config.js` must be in **the directory where the command runs** (for npx, the MCP client's working directory at startup; for source installs, the repo root).
 
 Once configured, the AI selects an environment via the `environment` argument: omitting it falls back to `defaultEnvironment`; an unregistered name returns an error listing the available environments — no silent misrouting. Every tool response echoes the environment it actually ran against.
 
@@ -167,9 +167,9 @@ Once configured, the AI selects an environment via the `environment` argument: o
 | `MYSQL_DATABASE` | Default database (optional) | - |
 | `READ_ONLY` | Enable read-only mode (disables mysql_execute) | `false` |
 | `MAX_ROWS` | Max rows returned by queries; extra rows are truncated | `1000` |
-| `MYSQL_MCP_CREDENTIALS_FILE` | Credentials file path (multi-environment + credential separation mode) | `~/.mysql-mcp/credentials.json` |
+| `MYSQL_MCP_CONFIG_FILE` | Config file path | `~/.mysql-mcp/config.json` |
 
-> In the multi-environment format, `MYSQL_*`/`SSH_*` environment variables do NOT apply to environment definitions (structure comes only from `config.js`); they only apply in the single-environment (legacy) format.
+> In the multi-environment format, `MYSQL_*`/`SSH_*` environment variables do NOT apply to environment definitions (environments come only from `config.json`); they only apply in the single-environment format (without an `environments` key).
 
 ### SSH tunnel
 
@@ -292,7 +292,7 @@ Roll back the current transaction and undo all uncommitted changes.
 
 1. **Direct local database**: when the dev database is directly reachable
 2. **SSH tunnel**: when production databases sit behind a bastion host (dev direct + prod via tunnel can coexist in one instance)
-3. **Single-instance multi-environment**: one MCP server registers dev/prod with credential separation and per-environment permissions
+3. **Single-instance multi-environment**: one MCP server registers dev/prod with per-environment permissions
 
 ## Hardening production reads (recommended)
 
@@ -311,12 +311,11 @@ Then point the prod environment at that account and enable `readOnly: true` (the
 
 ## Notes
 
-- Never commit passwords or other secrets to version control: use the credentials file for multi-environment mode (user home, not committed) and environment variables for single-environment mode
-- Tighten credentials file permissions: Linux/macOS `chmod 600 ~/.mysql-mcp/credentials.json`
+- The config file contains passwords and other secrets: never commit it to version control; tighten permissions on Linux/macOS with `chmod 600 ~/.mysql-mcp/config.json`
 - SSH tunnel mode is suited for intranet or protected databases; connections are established lazily — environments never queried never connect
 - **Read-only mode is off by default**: for production, combine a database-side read-only account with `readOnly: true` (see "Hardening production reads" above)
 - `mysql_query` only accepts read-only statements (SELECT/SHOW/DESCRIBE/EXPLAIN/WITH...SELECT); use `mysql_execute` for changes
-- Legacy single-connection configs need no changes after upgrading: they map automatically to a single environment named `default` with unchanged config-parsing behavior (connections are now lazy: startup no longer refuses to start when the database is unreachable; the error surfaces on first call)
+- Single-connection configs (without an `environments` key) map automatically to a single environment named `default`; connections are lazy (zero connections at startup; the error surfaces on first call)
 
 ## Contributing
 
@@ -341,16 +340,16 @@ Pushing a `v*` tag runs the tests and publishes to npm automatically (requires `
 
 ## Changelog
 
-### v1.4.0
+### v2.0.0
 
-**Multi-environment + credential separation + per-environment permissions**:
+**Multi-environment + unified JSON config**:
 
 - Single-instance multi-environment: one MCP server registers multiple environments (`environments` + `defaultEnvironment`); all tools accept an optional `environment` argument with explicit routing; responses echo the environment used
-- Credential separation: environment structure and readOnly policy live in the committable `config.js`; passwords/SSH keys live in the user-home credentials file (`~/.mysql-mcp/credentials.json`, path overridable via `MYSQL_MCP_CREDENTIALS_FILE`) — zero secrets in the MCP client config
+- Unified config in `~/.mysql-mcp/config.json` (plain JSON, structure and secrets in one file, path overridable via `MYSQL_MCP_CONFIG_FILE`) — zero arguments in the MCP client config
 - Per-environment read-only mode: `mysql_execute` / `mysql_begin` are fully disabled in readOnly environments; docs provide the standard least-privilege read-only account grants (the only unbypassable layer)
 - Independent connection pool / SSH tunnel / transaction state per environment; lazy connections (zero connections at startup; never-queried environments never connect); one environment's failure does not affect others
 - Startup structural validation: invalid environment names, missing default-environment declaration, etc. refuse to start
-- Backward compatible: legacy single-connection configs and pure environment-variable setups map automatically to a single `default` environment — no config changes needed on upgrade (connections are now lazy; an unreachable database no longer blocks startup)
+- Single-environment setup via environment variables (`MYSQL_*`/`SSH_*`; precedence: environment variables > `config.json` > defaults)
 
 ### v1.3.0
 

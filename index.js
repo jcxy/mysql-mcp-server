@@ -29,38 +29,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
 
-// 可选配置文件加载：优先用户当前工作目录（npx 场景），回退包目录（源码场景），均无则仅用环境变量
-async function loadFileConfig() {
-  const candidates = [join(process.cwd(), 'config.js'), join(__dirname, 'config.js')];
-  for (const p of candidates) {
-    if (!existsSync(p)) continue;
-    try {
-      return (await import(pathToFileURL(p).href)).default;
-    } catch (error) {
-      console.error(`[WARN] 加载配置文件失败 (${p}): ${error.message}`);
-    }
-  }
-  return {};
-}
-
-// 凭据文件加载薄层（接缝外唯一真实 I/O）：默认用户主目录约定路径，MYSQL_MCP_CREDENTIALS_FILE 可覆盖
-// 凭据文件为可选增强：不存在或解析失败时返回空对象，不阻断启动
-async function loadCredentials() {
-  const credPath = process.env.MYSQL_MCP_CREDENTIALS_FILE
-    || join(homedir(), '.mysql-mcp', 'credentials.json');
-  if (!existsSync(credPath)) {
+// 配置文件加载薄层（接缝外唯一真实 I/O）：默认用户主目录约定路径，MYSQL_MCP_CONFIG_FILE 可覆盖
+// 配置文件为可选：不存在时返回空对象（仅用环境变量），解析失败告警后同样继续
+function loadFileConfig() {
+  const configPath = process.env.MYSQL_MCP_CONFIG_FILE
+    || join(homedir(), '.mysql-mcp', 'config.json');
+  if (!existsSync(configPath)) {
     return {};
   }
   try {
-    return JSON.parse(readFileSync(credPath, 'utf-8'));
+    return JSON.parse(readFileSync(configPath, 'utf-8'));
   } catch (error) {
-    console.error(`[WARN] 加载凭据文件失败 (${credPath}): ${error.message}，将继续以无凭据模式启动`);
+    console.error(`[WARN] 加载配置文件失败 (${configPath}): ${error.message}，将继续以无文件配置模式启动`);
     return {};
   }
 }
 
-// 配置解析（新格式：结构来自 config.js + 秘密来自凭据文件；旧格式：环境变量 > 凭据 > config.js > 默认值）
-const cfg = loadConfig(process.env, await loadFileConfig(), await loadCredentials());
+// 配置解析（新格式：结构、策略与秘密均来自 config.json；旧格式：环境变量 > config.json > 默认值）
+const cfg = loadConfig(process.env, loadFileConfig());
 
 // 启动期结构校验：配置不合法直接拒启（连接在 T3 改为惰性建立）
 if (cfg.errors.length > 0) {

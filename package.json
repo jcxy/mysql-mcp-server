@@ -1,6 +1,6 @@
 {
   "name": "mysql2-mcp-server",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "MySQL MCP server that enables AI assistants to interact with MySQL databases. Supports direct connection, SSH tunnel, connection pool, transactions, and security enforcement.",
   "main": "index.js",
   "type": "module",
@@ -11,7 +11,7 @@
     "index.js",
     "lib/",
     "README.md",
-    "config.example.js"
+    "config.example.json"
   ],
   "engines": {
     "node": ">=18.14.1"
