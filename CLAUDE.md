@@ -36,8 +36,9 @@ npm test
 2. **SSH 隧道模式**: 每次查询经 forwardOut 建立临时连接，断线自动重连，不支持事务
 
 **配置来源** (优先级从高到低):
-1. 环境变量 (推荐，在 MCP 客户端配置中设置)
-2. `config.js` 文件 (从 `config.example.js` 复制)
+1. 环境变量 (推荐，在 MCP 客户端配置中设置；仅旧格式单环境生效)
+2. `config.js` 文件 (从 `config.example.js` 复制；支持多环境 `environments` + `defaultEnvironment`)
+3. 凭据文件 (多环境模式的秘密：默认 `~/.mysql-mcp/credentials.json`，`MYSQL_MCP_CREDENTIALS_FILE` 可覆盖；结构可提交、秘密不进仓库)
 
 **提供的 MCP 工具**（均支持可选 `environment` 参数路由到注册环境，成功返回回显实际作用的环境名）:
 - `mysql_query`: 只读查询（语句白名单），返回 `{environment, rows, truncated, returnedRows, maxRows}`
@@ -54,6 +55,7 @@ npm test
 | `MYSQL_USER` | MySQL 用户名 | root |
 | `MYSQL_PASSWORD` | MySQL 密码 | - |
 | `MYSQL_DATABASE` | 默认数据库 | - |
+| `MYSQL_MCP_CREDENTIALS_FILE` | 凭据文件路径（多环境模式） | `~/.mysql-mcp/credentials.json` |
 | `SSH_ENABLED` | 是否启用 SSH 隧道 | false |
 | `SSH_HOST` | SSH 服务器地址 | - |
 | `SSH_PORT` | SSH 服务器端口 | 22 |
