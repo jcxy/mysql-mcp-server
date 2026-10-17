@@ -1,0 +1,20 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    properties:
+      configFile:
+        type: string
+        title: Config file path
+        description: Optional override of the config file path (defaults to ~/.mysql-mcp/config.json). All environments, credentials and read-only policies live in that single file.
+  commandFunction:
+    # A JS function that produces the CLI command based on the given config to start the MCP.
+    |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'mysql2-mcp-server'],
+      env: config.configFile ? { MYSQL_MCP_CONFIG_FILE: config.configFile } : {}
+    })

@@ -1,7 +1,7 @@
 {
   "name": "mysql2-mcp-server",
-  "version": "2.0.0",
-  "description": "MySQL MCP server that enables AI assistants to interact with MySQL databases. Supports direct connection, SSH tunnel, connection pool, transactions, and security enforcement.",
+  "version": "2.0.1",
+  "description": "MySQL MCP server: one instance manages unlimited environments (dev/uat/prod) with per-environment read-only gating, SSH tunnel auto-reconnect, transactions and connection pooling, letting AI assistants interact with MySQL safely.",
   "main": "index.js",
   "type": "module",
   "bin": {
@@ -11,7 +11,8 @@
     "index.js",
     "lib/",
     "README.md",
-    "config.example.json"
+    "config.example.json",
+    "smithery.yaml"
   ],
   "engines": {
     "node": ">=18.14.1"
@@ -23,12 +24,20 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "mysql",
     "mysql2",
+    "mysql-mcp-server",
     "model-context-protocol",
     "ssh-tunnel",
+    "ssh",
+    "readonly",
+    "multi-environment",
     "database",
-    "ai-tools"
+    "ai-tools",
+    "claude",
+    "claude-desktop",
+    "cursor"
   ],
   "author": "jcxy",
   "license": "MIT",

@@ -10,7 +10,38 @@
 
 > 🌐 **English documentation**: see [README.en.md](./README.en.md)
 
-一个用于连接 MySQL 数据库的 MCP (Model Context Protocol) 服务器，支持直连和 SSH 隧道两种连接方式，让 AI 助手能够直接与 MySQL 数据库交互。
+一个专注于 MySQL 的 MCP (Model Context Protocol) 服务器：**单实例管理任意多套环境（dev / uat / prod …，数量不限），prod 按环境只读硬拦截，内网库走 SSH 隧道（断线自动重连）**，让 AI 助手安全地与 MySQL 数据库交互。
+
+## 同类项目对比
+
+| 能力 | 本项目 | [designcomputer/mysql_mcp_server](https://github.com/designcomputer/mysql_mcp_server) | [bytebase/dbhub](https://github.com/bytebase/dbhub) |
+|---|---|---|---|
+| 单实例多环境（数量不限、任意命名、调用级路由 + 环境回显） | ✅ | ❌ | ⚠️ 多数据源（TOML，按 id 拆分工具） |
+| 按环境只读（`mysql_execute` / 事务整体禁用） | ✅ | ⚠️ 全局开关 | ✅ 按数据源/工具 |
+| SSH 隧道 | ✅ 断线自动重连（指数退避） | ❌ | ✅ |
+| 显式事务工具（`mysql_begin`/`mysql_commit`/`mysql_rollback`） | ✅ | ❌ | ⚠️ 多语句事务 |
+| 连接池 | ✅ | ❌ | 未标注 |
+| 数据库范围 | 仅 MySQL（专用、轻量） | 仅 MySQL | MySQL / PostgreSQL / SQLite 等 5 种 |
+| 安装 | npx / npm / Smithery | pip / uvx / Smithery | Docker / npx |
+
+> ⚠️ 表示部分支持或以不同形态提供；「未标注」指对方官方文档未明确说明。表中信息如有过时，欢迎提 PR 修正。
+
+## 演示：AI 试图删 prod 数据，被只读模式拦截
+
+```text
+你：帮我把 prod 库里 id=3 的订单删掉
+
+AI 调用 mysql_execute:
+  sql:         DELETE FROM orders WHERE id = 3
+  environment: prod
+
+返回:
+  当前环境 "prod" 为只读模式，变更语句已被禁用。如需执行变更，请切换到非只读环境或调整该环境的 readOnly 配置后重试。
+
+AI：prod 环境是只读的，我不能删除数据。需要我用 mysql_query 先帮你确认这条订单的状态吗？
+```
+
+每个工具的返回值都会回显实际作用的环境名，误路由在第一时间可见。MCP 侧只读是纵深防御的一层，硬保证请配合数据库侧最小权限账号（见[生产环境只读加固](#生产环境只读加固推荐)）。
 
 ## 功能特性
 
@@ -22,12 +53,18 @@
 - 📋 **Schema 探索**: 列出表、查看表结构，帮助 AI 快速了解数据库
 - 💼 **事务支持**: 支持 BEGIN/COMMIT/ROLLBACK（直连模式）
 - 🛡️ **安全机制**: 语句白名单、结果截断、按环境只读模式
-- 🌍 **多环境支持**: 单实例同时注册 dev/prod 等多环境，调用时显式 `environment` 参数路由
+- 🌍 **多环境支持**: 单实例同时注册任意多套环境（dev/uat/prod…，数量不限、可任意命名），调用时显式 `environment` 参数路由
 - 🔐 **统一 JSON 配置**: 环境结构、权限与密码统一在一个 `~/.mysql-mcp/config.json`，MCP 配置零参数
 
 ## 安装
 
-### 方式一：npx 直接运行（推荐，无需克隆仓库）
+### 方式一：Smithery 一键安装（Claude Desktop）
+
+```bash
+npx -y @smithery/cli install @jcxy/mysql2-mcp-server --client claude
+```
+
+### 方式二：npx 直接运行（推荐，无需克隆仓库）
 
 无需安装，MCP 客户端会通过 npx 自动下载并运行：
 
@@ -35,14 +72,14 @@
 npx -y mysql2-mcp-server
 ```
 
-### 方式二：全局安装
+### 方式三：全局安装
 
 ```bash
 npm install -g mysql2-mcp-server
 mysql2-mcp-server
 ```
 
-### 方式三：从源码运行
+### 方式四：从源码运行
 
 ```bash
 git clone https://github.com/jcxy/mysql-mcp-server.git
@@ -106,7 +143,7 @@ cp config.example.json ~/.mysql-mcp/config.json
 
 ### 多环境配置示例
 
-单个 MCP 服务器同时注册 dev/prod 两个环境，配置统一写在 `~/.mysql-mcp/config.json`（结构与密码均在同一文件）。
+单个 MCP 服务器可同时注册**任意多套环境**（示例为 dev/uat/prod 三套；环境数量不限，环境名可用任意字母/数字/下划线组合），配置统一写在 `~/.mysql-mcp/config.json`（结构与密码均在同一文件）。
 
 **第一步：编写 `~/.mysql-mcp/config.json`**：
 
@@ -123,6 +160,15 @@ cp config.example.json ~/.mysql-mcp/config.json
       "readOnly": false,
       "maxRows": 1000
     },
+    "uat": {
+      "host": "10.0.0.4",
+      "port": 3306,
+      "user": "uat_user",
+      "password": "uat_password",
+      "database": "uatdb",
+      "readOnly": false,
+      "maxRows": 500
+    },
     "prod": {
       "host": "10.0.0.5",
       "port": 3306,
@@ -136,7 +182,7 @@ cp config.example.json ~/.mysql-mcp/config.json
 }
 ```
 
-说明：dev 与你的账号权限一致，AI 可自由执行 DDL/DML；prod 使用专用最小权限只读账号（见下方「生产环境只读加固」）并开启 `readOnly: true`（MCP 侧体验层：prod 禁用 mysql_execute / mysql_begin）。多环境格式下各环境的秘密仅来自本文件（`MYSQL_*`/`SSH_*` 环境变量不作用于环境定义）。
+说明：dev/uat 与你的账号权限一致，AI 可自由执行 DDL/DML（按团队规范决定 uat 是否收紧）；prod 使用专用最小权限只读账号（见下方「生产环境只读加固」）并开启 `readOnly: true`（MCP 侧体验层：prod 禁用 mysql_execute / mysql_begin）。多环境格式下各环境的秘密仅来自本文件（`MYSQL_*`/`SSH_*` 环境变量不作用于环境定义）。
 
 **第二步：MCP 客户端配置零参数**：
 
@@ -291,7 +337,7 @@ cp config.example.json ~/.mysql-mcp/config.json
 
 1. **直连本地数据库**: 开发环境数据库可直接访问时使用
 2. **SSH 隧道连接**: 生产数据库需要通过跳板机访问时使用（dev 直连 + prod 走 SSH 隧道可共存于同一实例）
-3. **单实例多环境管理**: 一个 MCP 服务器同时注册 dev/prod，按环境独立权限
+3. **单实例多环境管理**: 一个 MCP 服务器同时注册任意多套环境（dev/uat/prod…），按环境独立权限与限行
 
 ## 生产环境只读加固（推荐）
 
@@ -338,6 +384,11 @@ git push --tags
 推送 `v*` 标签后会自动运行测试并发布到 npm（需在仓库 Secrets 中配置 `NPM_TOKEN`）。
 
 ## 变更记录
+
+### v2.0.1
+
+- 文档：新增同类项目对比表与「只读拦截」演示；多环境示例扩展为 dev/uat/prod 三套，并明确环境数量不限、可任意命名
+- 渠道：新增 Smithery 一键安装（`smithery.yaml`）；补全 npm description 与 keywords 搜索元数据
 
 ### v2.0.0
 

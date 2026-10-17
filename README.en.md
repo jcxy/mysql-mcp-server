@@ -8,7 +8,40 @@
 
 [中文](./README.md) | English
 
-An MCP (Model Context Protocol) server for MySQL databases. It supports both direct connections and SSH tunnels, letting AI assistants interact with MySQL databases directly.
+A MySQL-focused MCP (Model Context Protocol) server: **one instance manages any number of environments (dev / uat / prod …), gates writes per environment with hard read-only interception, and reaches intranet databases over an SSH tunnel with automatic reconnection** — letting AI assistants interact with MySQL safely.
+
+## How it compares
+
+| Capability | This project | [designcomputer/mysql_mcp_server](https://github.com/designcomputer/mysql_mcp_server) | [bytebase/dbhub](https://github.com/bytebase/dbhub) |
+|---|---|---|---|
+| Multi-environment in one instance (unlimited, any names, per-call routing + environment echo) | ✅ | ❌ | ⚠️ multiple datasources (TOML, tools split by id) |
+| Per-environment read-only (mysql_execute / transactions fully disabled) | ✅ | ⚠️ global switch | ✅ per datasource/tool |
+| SSH tunnel | ✅ auto-reconnect with exponential backoff | ❌ | ✅ |
+| Explicit transaction tools (mysql_begin / mysql_commit / mysql_rollback) | ✅ | ❌ | ⚠️ multi-statement transactions |
+| Connection pool | ✅ | ❌ | not documented |
+| Databases | MySQL only (focused, lightweight) | MySQL only | MySQL / PostgreSQL / SQLite and more |
+| Install | npx / npm / Smithery | pip / uvx / Smithery | Docker / npx |
+
+> ⚠️ means partial support or a different shape; "not documented" means their official docs do not state it. If anything here is out of date, PRs are welcome.
+
+## Demo: AI tries to delete prod data, gets blocked by read-only mode
+
+```text
+You: Delete order id=3 from the prod database
+
+AI calls mysql_execute:
+  sql:         DELETE FROM orders WHERE id = 3
+  environment: prod
+
+Response (verbatim):
+  当前环境 "prod" 为只读模式，变更语句已被禁用。如需执行变更，请切换到非只读环境或调整该环境的 readOnly 配置后重试。
+  ("Environment 'prod' is read-only; write statements are disabled. Switch to a writable
+  environment or change the environment's readOnly setting and retry.")
+
+AI: prod is read-only, so I can't delete data there. Want me to check the order's status with mysql_query first?
+```
+
+Every tool response echoes the environment it actually ran against, so misrouting is visible immediately. The MCP-side read-only gate is one layer of defense in depth; the hard guarantee comes from a least-privilege database account (see [Hardening production reads](#hardening-production-reads-recommended)).
 
 ## Features
 
@@ -20,12 +53,18 @@ An MCP (Model Context Protocol) server for MySQL databases. It supports both dir
 - 📋 **Schema exploration**: list tables and inspect columns so the AI can understand your database quickly
 - 💼 **Transactions**: BEGIN/COMMIT/ROLLBACK support (direct mode)
 - 🛡️ **Security**: statement whitelist, result truncation, per-environment read-only mode
-- 🌍 **Multi-environment**: one server instance registers dev/prod etc.; calls route explicitly via an `environment` argument
+- 🌍 **Multi-environment**: one server instance registers any number of environments (dev/uat/prod…, unlimited and freely named); calls route explicitly via an `environment` argument
 - 🔐 **Unified JSON config**: all environments, permissions and credentials live in a single `~/.mysql-mcp/config.json` — zero arguments in the MCP config
 
 ## Installation
 
-### Option 1: Run with npx (recommended, no cloning needed)
+### Option 1: One-click install via Smithery (Claude Desktop)
+
+```bash
+npx -y @smithery/cli install @jcxy/mysql2-mcp-server --client claude
+```
+
+### Option 2: Run with npx (recommended, no cloning needed)
 
 No installation required — the MCP client downloads and runs it via npx automatically:
 
@@ -33,14 +72,14 @@ No installation required — the MCP client downloads and runs it via npx automa
 npx -y mysql2-mcp-server
 ```
 
-### Option 2: Global install
+### Option 3: Global install
 
 ```bash
 npm install -g mysql2-mcp-server
 mysql2-mcp-server
 ```
 
-### Option 3: Run from source
+### Option 4: Run from source
 
 ```bash
 git clone https://github.com/jcxy/mysql-mcp-server.git
@@ -104,7 +143,7 @@ Environment variables (`MYSQL_*`/`SSH_*`) only apply to single-environment confi
 
 ### Multi-environment example
 
-A single MCP server registers dev and prod; everything lives in one file, `~/.mysql-mcp/config.json` (structure and passwords together).
+A single MCP server registers **any number of environments** (the example below shows dev/uat/prod; environments are unlimited and may use any letters/digits/underscores); everything lives in one file, `~/.mysql-mcp/config.json` (structure and passwords together).
 
 **Step 1: write `~/.mysql-mcp/config.json`**:
 
@@ -121,6 +160,15 @@ A single MCP server registers dev and prod; everything lives in one file, `~/.my
       "readOnly": false,
       "maxRows": 1000
     },
+    "uat": {
+      "host": "10.0.0.4",
+      "port": 3306,
+      "user": "uat_user",
+      "password": "uat_password",
+      "database": "uatdb",
+      "readOnly": false,
+      "maxRows": 500
+    },
     "prod": {
       "host": "10.0.0.5",
       "port": 3306,
@@ -134,7 +182,7 @@ A single MCP server registers dev and prod; everything lives in one file, `~/.my
 }
 ```
 
-Notes: dev uses your full-privilege account so the AI can run DDL/DML freely; prod uses a dedicated least-privilege read-only account (see "Hardening production reads" below) with `readOnly: true` (the MCP-side UX layer: mysql_execute / mysql_begin disabled on prod). In the multi-environment format, each environment's secrets come only from this file (`MYSQL_*`/`SSH_*` environment variables do not apply to environment definitions).
+Notes: dev/uat use your full-privilege accounts so the AI can run DDL/DML freely (tighten uat per your team's conventions); prod uses a dedicated least-privilege read-only account (see "Hardening production reads" below) with `readOnly: true` (the MCP-side UX layer: mysql_execute / mysql_begin disabled on prod). In the multi-environment format, each environment's secrets come only from this file (`MYSQL_*`/`SSH_*` environment variables do not apply to environment definitions).
 
 **Step 2: MCP client config with zero arguments**:
 
@@ -289,7 +337,7 @@ Roll back the current transaction and undo all uncommitted changes.
 
 1. **Direct local database**: when the dev database is directly reachable
 2. **SSH tunnel**: when production databases sit behind a bastion host (dev direct + prod via tunnel can coexist in one instance)
-3. **Single-instance multi-environment**: one MCP server registers dev/prod with per-environment permissions
+3. **Single-instance multi-environment**: one MCP server registers any number of environments (dev/uat/prod…) with per-environment permissions and row limits
 
 ## Hardening production reads (recommended)
 
@@ -336,6 +384,11 @@ git push --tags
 Pushing a `v*` tag runs the tests and publishes to npm automatically (requires `NPM_TOKEN` configured in repository Secrets).
 
 ## Changelog
+
+### v2.0.1
+
+- Docs: added a comparison table against similar projects and a read-only interception demo; the multi-environment example now shows dev/uat/prod and states that the number of environments is unlimited
+- Distribution: added Smithery one-click install (`smithery.yaml`); improved npm description and keywords for search discovery
 
 ### v2.0.0
 

@@ -25,6 +25,17 @@
       }
     },
 
+    "uat": {
+      "host": "uat-db.example.com",
+      "port": 3306,
+      "user": "uat_user",
+      "password": "uat_password",
+      "database": "uatdb",
+
+      "readOnly": false,
+      "maxRows": 500
+    },
+
     "prod": {
       "host": "prod-db.example.com",
       "port": 3306,
