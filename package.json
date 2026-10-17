@@ -1,7 +1,7 @@
 {
   "name": "mysql2-mcp-server",
   "version": "2.0.1",
-  "description": "MySQL MCP server: one instance manages unlimited environments (dev/uat/prod) with per-environment read-only gating, SSH tunnel auto-reconnect, transactions and connection pooling, letting AI assistants interact with MySQL safely.",
+  "description": "MySQL MCP server that enables AI assistants to interact with MySQL databases. Supports direct connection, SSH tunnel, connection pool, transactions, and security enforcement.",
   "main": "index.js",
   "type": "module",
   "bin": {

@@ -128,6 +128,7 @@ for (const [name, entry] of Object.entries(cfg.environments)) {
     db: createLazyBackend(name, () =>
       entry.ssh.enabled ? createSSHBackend(entry.ssh, entry.db) : createPoolBackend(entry.db)
     ),
+    database: entry.db.database,
     readOnly: entry.readOnly,
     maxRows: entry.maxRows,
   };
