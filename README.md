@@ -211,7 +211,7 @@ cp config.example.json ~/.mysql-mcp/config.json
 | `MYSQL_PASSWORD` | MySQL 密码 | - |
 | `MYSQL_DATABASE` | 默认数据库（可选） | - |
 | `READ_ONLY` | 是否启用只读模式（禁用 mysql_execute） | `false` |
-| `MAX_ROWS` | 查询结果最大行数，超出将截断 | `1000` |
+| `MAX_ROWS` | 查询结果最大行数，超出则中断结果集传输并标记截断 | `1000` |
 | `MYSQL_MCP_CONFIG_FILE` | 配置文件路径 | `~/.mysql-mcp/config.json` |
 
 > 多环境格式下 `MYSQL_*`/`SSH_*` 环境变量不作用于环境定义（环境仅来自 `config.json`）；它们仅在单环境（无 `environments` 键）下生效。
@@ -240,7 +240,9 @@ cp config.example.json ~/.mysql-mcp/config.json
 
 **安全限制**:
 - 仅允许只读语句（SELECT、SHOW、DESCRIBE、EXPLAIN、WITH...SELECT）
-- 结果超过该环境的 maxRows 行时自动截断，返回前 N 行并附带截断标记
+- 结果按该环境的 maxRows 流式截断：读到第 maxRows+1 行即中断传输（不会把全量结果读入内存）
+
+**截断提示**: 发生截断时，返回内容由两个块组成——第一个块是一句给 AI 的可见提示（`[结果已截断] 仅返回前 N 行…请用 WHERE/LIMIT 收窄范围…`），第二个块才是 JSON；JSON 中 `truncated` / `returnedRows` / `maxRows` 也排在最前面，确保模型在读到数据前就能看到截断状态。
 
 **参数**:
 - `sql`: SQL 查询语句
@@ -250,10 +252,10 @@ cp config.example.json ~/.mysql-mcp/config.json
 ```json
 {
   "environment": "dev",
-  "rows": [...],
   "truncated": false,
   "returnedRows": 10,
-  "maxRows": 1000
+  "maxRows": 1000,
+  "rows": [...]
 }
 ```
 
@@ -384,6 +386,17 @@ git push --tags
 推送 `v*` 标签后会自动运行测试并发布到 npm（需在仓库 Secrets 中配置 `NPM_TOKEN`）。
 
 ## 变更记录
+
+### v2.1.0
+
+**截断不再静默**：
+
+- 查询结果改为流式截断：读到第 maxRows+1 行即中断传输并销毁连接，不再先全量加载再切片（大表查询不再撑爆内存、不再等全表传完）
+- 截断时返回两个 content 块：首个块是一句给 AI 的可见提示（`[结果已截断] 仅返回前 N 行…请用 WHERE/LIMIT 收窄范围…`），JSON 在第二个块（此前只有 JSON 末尾的 `truncated: true`，模型常在读到它之前就被客户端裁掉，实际表现为静默截断）
+- JSON 中 `truncated` / `returnedRows` / `maxRows` 前置到 `rows` 之前
+- `mysql_query` / `mysql_list_tables` / `mysql_describe_table` 的工具描述声明各环境 maxRows 上限，便于 AI 主动用 WHERE/LIMIT 收窄
+- 事务内查询被截断时连接已销毁，事务随之作废，后续 `commit`/`rollback` 明确报「当前没有活跃的事务」
+- `MAX_ROWS` 默认值仍为 1000，不建议为省事而全局调大
 
 ### v2.0.1
 

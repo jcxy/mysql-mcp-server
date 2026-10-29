@@ -113,6 +113,7 @@ function createLazyBackend(name, factory) {
   }
 
   return {
+    queryLimited: (sql, maxRows) => invoke('queryLimited', sql, maxRows),
     query: (sql) => invoke('query', sql),
     execute: (sql) => invoke('execute', sql),
     begin: () => invoke('begin'),
@@ -156,6 +157,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: buildToolDefinitions({
       environmentNames: Object.keys(environmentRegistry.environments),
       defaultEnvironment: environmentRegistry.defaultEnvironment,
+      maxRowsByEnv: Object.fromEntries(
+        Object.entries(environmentRegistry.environments).map(([name, env]) => [name, env.maxRows])
+      ),
     }),
   };
 });

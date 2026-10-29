@@ -211,7 +211,7 @@ Once configured, the AI selects an environment via the `environment` argument: o
 | `MYSQL_PASSWORD` | MySQL password | - |
 | `MYSQL_DATABASE` | Default database (optional) | - |
 | `READ_ONLY` | Enable read-only mode (disables mysql_execute) | `false` |
-| `MAX_ROWS` | Max rows returned by queries; extra rows are truncated | `1000` |
+| `MAX_ROWS` | Max rows returned by queries; exceeding rows abort the result stream and mark the response as truncated | `1000` |
 | `MYSQL_MCP_CONFIG_FILE` | Config file path | `~/.mysql-mcp/config.json` |
 
 > In the multi-environment format, `MYSQL_*`/`SSH_*` environment variables do NOT apply to environment definitions (environments come only from `config.json`); they only apply in the single-environment format (without an `environments` key).
@@ -240,7 +240,9 @@ Run read-only SQL (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH...SELECT) and retur
 
 **Security limits**:
 - Only read-only statements are allowed (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH...SELECT)
-- Results are truncated to the environment's maxRows, returning the first N rows with a truncation flag
+- Results are streamed and cut off at the environment's maxRows: the query is aborted as soon as row maxRows+1 arrives, so a full result set is never materialized in memory
+
+**Truncation notice**: when a result is truncated, the response contains two content blocks — the first is a human-readable hint for the AI (`[结果已截断] only the first N rows… narrow it with WHERE/LIMIT…`), and the JSON follows in the second block. Inside the JSON, `truncated` / `returnedRows` / `maxRows` are also placed before `rows`, so the model sees the truncation state before the data.
 
 **Parameters**:
 - `sql`: the SQL query
@@ -250,10 +252,10 @@ Run read-only SQL (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH...SELECT) and retur
 ```json
 {
   "environment": "dev",
-  "rows": [...],
   "truncated": false,
   "returnedRows": 10,
-  "maxRows": 1000
+  "maxRows": 1000,
+  "rows": [...]
 }
 ```
 
@@ -384,6 +386,17 @@ git push --tags
 Pushing a `v*` tag runs the tests and publishes to npm automatically (requires `NPM_TOKEN` configured in repository Secrets).
 
 ## Changelog
+
+### v2.1.0
+
+**Truncation is no longer silent**:
+
+- Query results are truncated as a stream: the query is aborted (and the connection destroyed) once row maxRows+1 arrives, instead of loading the whole result set into memory and slicing afterwards
+- Truncated responses now contain two content blocks: the first is a visible hint for the AI (`[结果已截断] only the first N rows… narrow it with WHERE/LIMIT…`), the JSON is in the second block (previously only a trailing `truncated: true` in the JSON, which models often never saw because the client clipped the payload first)
+- `truncated` / `returnedRows` / `maxRows` are moved ahead of `rows` in the JSON
+- `mysql_query` / `mysql_list_tables` / `mysql_describe_table` descriptions now advertise each environment's maxRows, so the AI narrows queries with WHERE/LIMIT up front
+- A query truncated inside a transaction invalidates that transaction (its connection is destroyed); a later `commit`/`rollback` reports "no active transaction"
+- `MAX_ROWS` still defaults to 1000 — do not raise it globally just to avoid truncation
 
 ### v2.0.1
 
